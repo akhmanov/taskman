@@ -10,36 +10,38 @@ import (
 	"github.com/assistant-wi/taskman/internal/store"
 )
 
-func TestProjectArchiveFailsWhenTaskStillActive(t *testing.T) {
+func TestProjectArchiveFailsWhenTaskIsNotTerminal(t *testing.T) {
 	root := t.TempDir()
 	writeConfig(t, root, `version: 1
 defaults:
   project:
     labels: []
-    traits: {}
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars: {}
+workflow:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-steps:
-  project_archive:
-    - name: noop
-      cmd: [./bin/noop]
+    statuses: [todo, active, done, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
+  project:
+    archive:
+      steps:
+        - name: noop
+          cmd: [./bin/noop]
 `)
 	writeExecutable(t, filepath.Join(root, "bin", "noop"), "#!/bin/sh\necho '{\"ok\":true,\"message\":\"archive ok\"}'\n")
 
 	s := store.New(root)
-	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusDone}); err != nil {
+	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
 		t.Fatalf("scaffold project: %v", err)
 	}
-	if err := s.ScaffoldTask(model.TaskState{Version: 1, Slug: "cloud-api-auth", Project: "user-permissions", Repo: "cloud", Status: model.TaskStatusActive, Worktree: model.TaskWorktreeState{Status: model.WorktreeStatusPresent}, MR: model.TaskMRState{Status: model.MRStatusReady}}); err != nil {
+	if err := s.ScaffoldTask(model.TaskState{Version: 1, Slug: "api-auth", Project: "user-permissions", Status: model.TaskStatus("active")}); err != nil {
 		t.Fatalf("scaffold task: %v", err)
 	}
 
@@ -61,36 +63,38 @@ steps:
 	}
 }
 
-func TestProjectArchiveMovesProjectWhenLocalGatesPass(t *testing.T) {
+func TestProjectArchiveMovesProjectWhenTasksAreTerminal(t *testing.T) {
 	root := t.TempDir()
 	writeConfig(t, root, `version: 1
 defaults:
   project:
     labels: []
-    traits: {}
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars: {}
+workflow:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-steps:
-  project_archive:
-    - name: noop
-      cmd: [./bin/noop]
+    statuses: [todo, active, done, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      close:
+        from: [done]
+        to: closed
+  project:
+    archive:
+      steps:
+        - name: noop
+          cmd: [./bin/noop]
 `)
 	writeExecutable(t, filepath.Join(root, "bin", "noop"), "#!/bin/sh\necho '{\"ok\":true,\"message\":\"archive ok\"}'\n")
 
 	s := store.New(root)
-	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusDone}); err != nil {
+	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
 		t.Fatalf("scaffold project: %v", err)
 	}
-	if err := s.ScaffoldTask(model.TaskState{Version: 1, Slug: "cloud-api-auth", Project: "user-permissions", Repo: "cloud", Status: model.TaskStatusDone, Worktree: model.TaskWorktreeState{Status: model.WorktreeStatusCleaned}, MR: model.TaskMRState{Status: model.MRStatusReady}}); err != nil {
+	if err := s.ScaffoldTask(model.TaskState{Version: 1, Slug: "api-auth", Project: "user-permissions", Status: model.TaskStatus("closed")}); err != nil {
 		t.Fatalf("scaffold task: %v", err)
 	}
 
