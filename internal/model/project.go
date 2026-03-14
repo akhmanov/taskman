@@ -4,8 +4,6 @@ type ProjectStatus string
 
 const (
 	ProjectStatusActive   ProjectStatus = "active"
-	ProjectStatusBlocked  ProjectStatus = "blocked"
-	ProjectStatusDone     ProjectStatus = "done"
 	ProjectStatusArchived ProjectStatus = "archived"
 )
 
@@ -14,7 +12,7 @@ type ProjectState struct {
 	Slug      string            `json:"slug" yaml:"slug"`
 	Status    ProjectStatus     `json:"status" yaml:"status"`
 	Labels    []string          `json:"labels,omitempty" yaml:"labels,omitempty"`
-	Traits    map[string]string `json:"traits,omitempty" yaml:"traits,omitempty"`
+	Vars      map[string]string `json:"vars,omitempty" yaml:"vars,omitempty"`
 	CreatedAt string            `json:"created_at,omitempty" yaml:"created_at,omitempty"`
 	UpdatedAt string            `json:"updated_at,omitempty" yaml:"updated_at,omitempty"`
 	Tasks     TaskCounts        `json:"tasks,omitempty" yaml:"tasks,omitempty"`
@@ -22,13 +20,7 @@ type ProjectState struct {
 	LastOp    OperationState    `json:"last_op,omitempty" yaml:"last_op,omitempty"`
 }
 
-type TaskCounts struct {
-	Todo      int `json:"todo,omitempty" yaml:"todo,omitempty"`
-	Active    int `json:"active,omitempty" yaml:"active,omitempty"`
-	Blocked   int `json:"blocked,omitempty" yaml:"blocked,omitempty"`
-	Done      int `json:"done,omitempty" yaml:"done,omitempty"`
-	Cancelled int `json:"cancelled,omitempty" yaml:"cancelled,omitempty"`
-}
+type TaskCounts map[string]int
 
 type ArchiveState struct {
 	Ready    bool     `json:"ready" yaml:"ready"`
