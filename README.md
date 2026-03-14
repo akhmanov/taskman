@@ -13,12 +13,17 @@ It does not treat `tasks/` as code. The sibling `tasks/` repository is the runti
 
 ## Runtime root
 
-By default the CLI looks for `../tasks` relative to the `taskman/` repo.
+Runtime root precedence is:
+
+1. `--root`
+2. `TASKMAN_ROOT`
+3. fallback `../tasks`
 
 Override it with:
 
 ```bash
-taskman --root /path/to/tasks projects get
+taskman --root /path/to/tasks project list
+TASKMAN_ROOT=/path/to/tasks taskman doctor
 ```
 
 ## Install
@@ -30,47 +35,53 @@ go install github.com/akhmanov/taskman@latest
 ## Command shape
 
 ```bash
-taskman projects get
-taskman projects describe <project> --view raw|agent
-taskman projects create <project>
-taskman projects update <project> --var k=v --unset-var k
-taskman projects brief get <project>
-taskman projects brief set <project> --content "..."
-taskman projects brief set <project> --file ./project-brief.md
-taskman projects brief edit <project>
-taskman projects brief init <project> --force
-taskman projects events add <project> --id EVT-001 --at 2026-03-14T10:00:00Z --type decision --summary "..." --actor taskman
-taskman projects events get <project> --type decision --active-only
-taskman projects archive <project>
+taskman project list
+taskman project show <project> --view raw|agent
+taskman project add <project>
+taskman project update <project> --var k=v --unset-var k
+taskman project brief show <project>
+taskman project brief set <project> --content "..."
+taskman project brief set <project> --file ./project-brief.md
+taskman project brief set <project> --file -
+taskman project brief edit <project>
+taskman project brief init <project> --force
+taskman project event add <project> --id EVT-001 --at 2026-03-14T10:00:00Z --type decision --summary "..." --actor taskman
+taskman project event list <project> --type decision --active-only
+taskman project archive <project>
 
-taskman tasks get --project <project> --status <status>
-taskman tasks describe <project/task> --view raw|agent
-taskman tasks create --project <project> --name <name>
-taskman tasks update <project/task> --var k=v --unset-var k
-taskman tasks brief get <project/task>
-taskman tasks brief set <project/task> --content "..."
-taskman tasks brief set <project/task> --file ./task-brief.md
-taskman tasks brief edit <project/task>
-taskman tasks brief init <project/task> --force
-taskman tasks events add <project/task> --id EVT-001 --at 2026-03-14T10:00:00Z --type note --summary "..." --actor taskman
-taskman tasks events get <project/task> --type blocker --active-only
-taskman tasks transition <project/task> <transition>
+taskman task list -p <project> --status <status>
+taskman task show <task> -p <project> --view raw|agent
+taskman task add <task> -p <project>
+taskman task update <task> -p <project> --var k=v --unset-var k
+taskman task brief show <task> -p <project>
+taskman task brief set <task> -p <project> --content "..."
+taskman task brief set <task> -p <project> --file ./task-brief.md
+taskman task brief set <task> -p <project> --file -
+taskman task brief edit <task> -p <project>
+taskman task brief init <task> -p <project> --force
+taskman task event add <task> -p <project> --id EVT-001 --at 2026-03-14T10:00:00Z --type note --summary "..." --actor taskman
+taskman task event list <task> -p <project> --type blocker --active-only
+taskman task start <task> -p <project>
+taskman task complete <task> -p <project>
+taskman task close <task> -p <project>
 
 taskman doctor
 ```
+
+The resource-first singular form above is the only supported public CLI.
 
 ## Metadata flags
 
 Creation commands accept repeatable metadata flags:
 
 ```bash
-taskman projects create user-permissions --label auth --var area=product
-taskman tasks create --project user-permissions --name api-auth --label backend --var repo=cloud --var kind=feature
+taskman project add user-permissions --label auth --var area=product
+taskman task add api-auth -p user-permissions --label backend --var repo=cloud --var kind=feature
 ```
 
 - `labels` are for filtering and human grouping.
 - `vars` are workflow inputs interpreted by the runtime config and external helpers.
-- `tasks create` is side-effect free; automation runs only on explicit transitions.
+- `task add` is side-effect free; automation runs only on explicit transitions.
 
 ## Memory Layer
 
@@ -79,10 +90,10 @@ taskman tasks create --project user-permissions --name api-auth --label backend 
 - `state.yaml` keeps canonical machine-oriented state.
 - `brief.md` stores current truth for a project or task.
 - `events.yaml` stores typed append-only history.
-- `describe --view agent` renders a bounded short-memory view instead of raw persistence.
+- `show --view agent` renders a bounded short-memory view instead of raw persistence.
 
 For human editing, prefer `brief edit`.
-For automation and agents, prefer `brief set --file`.
+For automation and agents, prefer `brief set --file` or `brief set --file -`.
 Use `brief set --content` only for very small updates.
 
 ## Help contract
@@ -93,9 +104,9 @@ Use:
 
 ```bash
 taskman --help
-taskman projects --help
-taskman tasks create --help
-taskman tasks transition --help
+taskman project --help
+taskman task add --help
+taskman task start --help
 ```
 
 ## Development

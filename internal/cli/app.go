@@ -21,60 +21,65 @@ import (
 )
 
 func BuildApp() *urfavecli.Command {
-	projects := &urfavecli.Command{
-		Name:  "projects",
-		Usage: "Manage project resources",
+	project := &urfavecli.Command{
+		Name:  "project",
+		Usage: "Manage projects",
 		Commands: []*urfavecli.Command{
-			{Name: "get", Usage: "List projects", Flags: []urfavecli.Flag{outputFlag()}, Action: projectsGetAction},
-			{Name: "describe", Usage: "Describe a project", ArgsUsage: "<project>", Flags: []urfavecli.Flag{outputFlag(), describeViewFlag()}, Action: projectsDescribeAction},
-			{Name: "create", Usage: "Create a project", ArgsUsage: "<project>", Flags: []urfavecli.Flag{&urfavecli.StringSliceFlag{Name: "label"}, &urfavecli.StringSliceFlag{Name: "var"}}, Action: projectsCreateAction},
+			{Name: "list", Usage: "List projects", Flags: []urfavecli.Flag{outputFlag()}, Action: projectsGetAction},
+			{Name: "show", Usage: "Show a project", ArgsUsage: "<project>", Flags: []urfavecli.Flag{outputFlag(), describeViewFlag()}, Action: projectsDescribeAction},
+			{Name: "add", Usage: "Add a project", ArgsUsage: "<project>", Flags: []urfavecli.Flag{&urfavecli.StringSliceFlag{Name: "label"}, &urfavecli.StringSliceFlag{Name: "var"}}, Action: projectsCreateAction},
 			{Name: "update", Usage: "Update project metadata", ArgsUsage: "<project>", Flags: []urfavecli.Flag{&urfavecli.StringSliceFlag{Name: "label"}, &urfavecli.StringSliceFlag{Name: "var"}, &urfavecli.StringSliceFlag{Name: "unset-var"}}, Action: projectsUpdateAction},
 			{Name: "brief", Usage: "Manage project brief", Commands: []*urfavecli.Command{
-				{Name: "get", Usage: "Get project brief", ArgsUsage: "<project>", Flags: []urfavecli.Flag{outputFlag()}, Action: projectsBriefGetAction},
+				{Name: "show", Usage: "Show project brief", ArgsUsage: "<project>", Flags: []urfavecli.Flag{outputFlag()}, Action: projectsBriefGetAction},
 				{Name: "set", Usage: "Set project brief", ArgsUsage: "<project>", Flags: briefSetFlags(), Action: projectsBriefSetAction},
 				{Name: "init", Usage: "Initialize project brief template", ArgsUsage: "<project>", Flags: []urfavecli.Flag{&urfavecli.BoolFlag{Name: "force"}}, Action: projectsBriefInitAction},
 				{Name: "edit", Usage: "Edit project brief in $EDITOR", ArgsUsage: "<project>", Action: projectsBriefEditAction},
 			}},
-			{Name: "events", Aliases: []string{"event"}, Usage: "Manage project events", Commands: []*urfavecli.Command{
+			{Name: "event", Usage: "Manage project events", Commands: []*urfavecli.Command{
 				{Name: "add", Usage: "Add project event", ArgsUsage: "<project>", Flags: payloadEventFlags(), Action: projectsEventAddAction},
-				{Name: "get", Usage: "Get project events", ArgsUsage: "<project>", Flags: eventGetFlags(), Action: projectsEventGetAction},
+				{Name: "list", Usage: "List project events", ArgsUsage: "<project>", Flags: eventGetFlags(), Action: projectsEventGetAction},
 			}},
 			{Name: "archive", Usage: "Archive a project", ArgsUsage: "<project>", Action: projectsArchiveAction},
 		},
 	}
 
-	tasks := &urfavecli.Command{
-		Name:  "tasks",
-		Usage: "Manage task resources",
+	task := &urfavecli.Command{
+		Name:  "task",
+		Usage: "Manage tasks",
 		Commands: []*urfavecli.Command{
-			{Name: "get", Usage: "List tasks", Flags: []urfavecli.Flag{&urfavecli.StringFlag{Name: "project"}, &urfavecli.StringFlag{Name: "status"}, outputFlag()}, Action: tasksGetAction},
-			{Name: "describe", Usage: "Describe a task", ArgsUsage: "<project>/<task>", Flags: []urfavecli.Flag{outputFlag(), describeViewFlag()}, Action: tasksDescribeAction},
-			{Name: "create", Usage: "Create a task", Flags: []urfavecli.Flag{&urfavecli.StringFlag{Name: "project", Required: true}, &urfavecli.StringFlag{Name: "name", Required: true}, &urfavecli.StringSliceFlag{Name: "label"}, &urfavecli.StringSliceFlag{Name: "var"}}, Action: tasksCreateAction},
-			{Name: "update", Usage: "Update task metadata", ArgsUsage: "<project>/<task>", Flags: []urfavecli.Flag{&urfavecli.StringSliceFlag{Name: "label"}, &urfavecli.StringSliceFlag{Name: "var"}, &urfavecli.StringSliceFlag{Name: "unset-var"}}, Action: tasksUpdateAction},
+			{Name: "list", Usage: "List tasks", Flags: []urfavecli.Flag{projectFlag(), &urfavecli.StringFlag{Name: "status"}, outputFlag()}, Action: tasksGetAction},
+			{Name: "show", Usage: "Show a task", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag(), outputFlag(), describeViewFlag()}, Action: tasksDescribeAction},
+			{Name: "add", Usage: "Add a task", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag(), &urfavecli.StringSliceFlag{Name: "label"}, &urfavecli.StringSliceFlag{Name: "var"}}, Action: tasksCreateAction},
+			{Name: "update", Usage: "Update task metadata", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag(), &urfavecli.StringSliceFlag{Name: "label"}, &urfavecli.StringSliceFlag{Name: "var"}, &urfavecli.StringSliceFlag{Name: "unset-var"}}, Action: tasksUpdateAction},
 			{Name: "brief", Usage: "Manage task brief", Commands: []*urfavecli.Command{
-				{Name: "get", Usage: "Get task brief", ArgsUsage: "<project>/<task>", Flags: []urfavecli.Flag{outputFlag()}, Action: tasksBriefGetAction},
-				{Name: "set", Usage: "Set task brief", ArgsUsage: "<project>/<task>", Flags: briefSetFlags(), Action: tasksBriefSetAction},
-				{Name: "init", Usage: "Initialize task brief template", ArgsUsage: "<project>/<task>", Flags: []urfavecli.Flag{&urfavecli.BoolFlag{Name: "force"}}, Action: tasksBriefInitAction},
-				{Name: "edit", Usage: "Edit task brief in $EDITOR", ArgsUsage: "<project>/<task>", Action: tasksBriefEditAction},
+				{Name: "show", Usage: "Show task brief", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag(), outputFlag()}, Action: tasksBriefGetAction},
+				{Name: "set", Usage: "Set task brief", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, briefSetFlags()...), Action: tasksBriefSetAction},
+				{Name: "init", Usage: "Initialize task brief template", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag(), &urfavecli.BoolFlag{Name: "force"}}, Action: tasksBriefInitAction},
+				{Name: "edit", Usage: "Edit task brief in $EDITOR", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: tasksBriefEditAction},
 			}},
-			{Name: "events", Aliases: []string{"event"}, Usage: "Manage task events", Commands: []*urfavecli.Command{
-				{Name: "add", Usage: "Add task event", ArgsUsage: "<project>/<task>", Flags: payloadEventFlags(), Action: tasksEventAddAction},
-				{Name: "get", Usage: "Get task events", ArgsUsage: "<project>/<task>", Flags: eventGetFlags(), Action: tasksEventGetAction},
+			{Name: "event", Usage: "Manage task events", Commands: []*urfavecli.Command{
+				{Name: "add", Usage: "Add task event", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, payloadEventFlags()...), Action: tasksEventAddAction},
+				{Name: "list", Usage: "List task events", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, eventGetFlags()...), Action: tasksEventGetAction},
 			}},
-			{Name: "transition", Usage: "Run a task transition", ArgsUsage: "<project>/<task> <transition>", Action: tasksTransitionAction},
+			{Name: "start", Usage: "Start a task", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: taskTransitionVerbAction("start")},
+			{Name: "block", Usage: "Block a task", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: taskTransitionVerbAction("block")},
+			{Name: "unblock", Usage: "Unblock a task", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: taskTransitionVerbAction("unblock")},
+			{Name: "complete", Usage: "Complete a task", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: taskTransitionVerbAction("complete")},
+			{Name: "cancel", Usage: "Cancel a task", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: taskTransitionVerbAction("cancel")},
+			{Name: "close", Usage: "Close a task", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: taskTransitionVerbAction("close")},
 		},
 	}
 
 	return &urfavecli.Command{
 		Name:        "taskman",
 		Usage:       "Task workflow engine for projects, tasks, and lifecycle operations",
-		Description: "Resources: projects, tasks, doctor\n\nExamples:\n  taskman projects get\n  taskman projects create user-permissions\n  taskman projects archive user-permissions\n  taskman tasks get --project user-permissions --status active\n  taskman tasks describe user-permissions/api-auth\n  taskman tasks transition user-permissions/api-auth start",
+		Description: "Resources: project, task, doctor\n\nExamples:\n  taskman project list\n  taskman project add user-permissions\n  taskman project archive user-permissions\n  taskman task list -p user-permissions --status active\n  taskman task show api-auth -p user-permissions\n  taskman task start api-auth -p user-permissions\n  taskman task complete api-auth -p user-permissions\n  taskman task close api-auth -p user-permissions",
 		Flags: []urfavecli.Flag{
-			&urfavecli.StringFlag{Name: "root", Value: "../tasks", Usage: "Path to the runtime tasks root"},
+			&urfavecli.StringFlag{Name: "root", Value: "../tasks", Usage: "Path to the runtime tasks root", Sources: urfavecli.EnvVars("TASKMAN_ROOT")},
 		},
 		Commands: []*urfavecli.Command{
-			projects,
-			tasks,
+			project,
+			task,
 			{Name: "doctor", Usage: "Inspect taskman health", Action: doctorAction},
 		},
 	}
@@ -95,6 +100,9 @@ func taskService(cmd *urfavecli.Command) lifecycle.TaskService {
 }
 
 func projectsGetAction(_ context.Context, cmd *urfavecli.Command) error {
+	if extra := strings.TrimSpace(cmd.Args().First()); extra != "" {
+		return fmt.Errorf("project list does not accept a project id; use `taskman project show <project>`")
+	}
 	projects, err := runtimeStore(cmd).ListProjects()
 	if err != nil {
 		return err
@@ -238,8 +246,11 @@ func projectsCreateAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	_, err = projectService(cmd).Create(cmd.Args().First(), cmd.StringSlice("label"), vars)
-	return err
+	project, err := projectService(cmd).Create(cmd.Args().First(), cmd.StringSlice("label"), vars)
+	if err != nil {
+		return err
+	}
+	return renderProjectMutationSummary(cmd, project)
 }
 
 func projectsUpdateAction(_ context.Context, cmd *urfavecli.Command) error {
@@ -247,8 +258,11 @@ func projectsUpdateAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	_, err = projectService(cmd).Update(cmd.Args().First(), cmd.StringSlice("label"), vars, cmd.StringSlice("unset-var"))
-	return err
+	project, err := projectService(cmd).Update(cmd.Args().First(), cmd.StringSlice("label"), vars, cmd.StringSlice("unset-var"))
+	if err != nil {
+		return err
+	}
+	return renderProjectMutationSummary(cmd, project)
 }
 
 func projectsBriefGetAction(_ context.Context, cmd *urfavecli.Command) error {
@@ -263,14 +277,19 @@ func projectsBriefGetAction(_ context.Context, cmd *urfavecli.Command) error {
 }
 
 func projectsBriefSetAction(_ context.Context, cmd *urfavecli.Command) error {
-	brief, err := resolveBriefContent(cmd)
+	brief, source, err := resolveBriefContent(cmd)
 	if err != nil {
 		return err
 	}
-	return projectService(cmd).SetBrief(cmd.Args().First(), brief)
+	projectSlug := cmd.Args().First()
+	if err := projectService(cmd).SetBrief(projectSlug, brief); err != nil {
+		return err
+	}
+	return renderProjectBriefSummary(cmd, projectSlug, source)
 }
 
 func projectsBriefInitAction(_ context.Context, cmd *urfavecli.Command) error {
+	projectSlug := cmd.Args().First()
 	current, err := projectService(cmd).GetBrief(cmd.Args().First())
 	if err != nil {
 		return err
@@ -278,7 +297,10 @@ func projectsBriefInitAction(_ context.Context, cmd *urfavecli.Command) error {
 	if strings.TrimSpace(current) != "" && !cmd.Bool("force") {
 		return fmt.Errorf("project brief already exists; use --force to overwrite")
 	}
-	return projectService(cmd).SetBrief(cmd.Args().First(), model.ProjectBriefTemplate)
+	if err := projectService(cmd).SetBrief(projectSlug, model.ProjectBriefTemplate); err != nil {
+		return err
+	}
+	return renderProjectBriefSummary(cmd, projectSlug, "template")
 }
 
 func projectsBriefEditAction(_ context.Context, cmd *urfavecli.Command) error {
@@ -298,7 +320,11 @@ func projectsEventAddAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	return projectService(cmd).AddEvent(cmd.Args().First(), event)
+	projectSlug := cmd.Args().First()
+	if err := projectService(cmd).AddEvent(projectSlug, event); err != nil {
+		return err
+	}
+	return renderProjectEventSummary(cmd, projectSlug, event)
 }
 
 func projectsEventGetAction(_ context.Context, cmd *urfavecli.Command) error {
@@ -323,6 +349,9 @@ func projectsArchiveAction(_ context.Context, cmd *urfavecli.Command) error {
 }
 
 func tasksGetAction(_ context.Context, cmd *urfavecli.Command) error {
+	if extra := strings.TrimSpace(cmd.Args().First()); extra != "" {
+		return fmt.Errorf("task list does not accept a task id; use `taskman task show <task> -p <project>`")
+	}
 	tasks, err := runtimeStore(cmd).ListTasks(cmd.String("project"))
 	if err != nil {
 		return err
@@ -346,7 +375,7 @@ func tasksGetAction(_ context.Context, cmd *urfavecli.Command) error {
 }
 
 func tasksDescribeAction(_ context.Context, cmd *urfavecli.Command) error {
-	project, task, err := splitTaskID(cmd.Args().First())
+	project, task, err := resolveTaskRef(cmd, 0)
 	if err != nil {
 		return err
 	}
@@ -491,16 +520,30 @@ func tasksDescribeAction(_ context.Context, cmd *urfavecli.Command) error {
 }
 
 func tasksCreateAction(_ context.Context, cmd *urfavecli.Command) error {
+	projectSlug := strings.TrimSpace(cmd.String("project"))
+	if projectSlug == "" {
+		return fmt.Errorf("task add requires --project/-p")
+	}
+	taskName := strings.TrimSpace(cmd.Args().First())
+	if taskName == "" {
+		return fmt.Errorf("task name is required")
+	}
+	if strings.Contains(taskName, "/") {
+		return fmt.Errorf("task must be addressed as <task> -p <project>")
+	}
 	vars, err := parseVars(cmd.StringSlice("var"))
 	if err != nil {
 		return err
 	}
-	_, err = taskService(cmd).Create(cmd.String("project"), cmd.String("name"), cmd.StringSlice("label"), vars)
-	return err
+	task, err := taskService(cmd).Create(projectSlug, taskName, cmd.StringSlice("label"), vars)
+	if err != nil {
+		return err
+	}
+	return renderTaskMutationSummary(cmd, task)
 }
 
 func tasksUpdateAction(_ context.Context, cmd *urfavecli.Command) error {
-	projectSlug, taskSlug, err := splitTaskID(cmd.Args().First())
+	projectSlug, taskSlug, err := resolveTaskRef(cmd, 0)
 	if err != nil {
 		return err
 	}
@@ -508,12 +551,15 @@ func tasksUpdateAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	_, err = taskService(cmd).Update(projectSlug, taskSlug, cmd.StringSlice("label"), vars, cmd.StringSlice("unset-var"))
-	return err
+	task, err := taskService(cmd).Update(projectSlug, taskSlug, cmd.StringSlice("label"), vars, cmd.StringSlice("unset-var"))
+	if err != nil {
+		return err
+	}
+	return renderTaskMutationSummary(cmd, task)
 }
 
 func tasksBriefGetAction(_ context.Context, cmd *urfavecli.Command) error {
-	projectSlug, taskSlug, err := splitTaskID(cmd.Args().First())
+	projectSlug, taskSlug, err := resolveTaskRef(cmd, 0)
 	if err != nil {
 		return err
 	}
@@ -528,19 +574,22 @@ func tasksBriefGetAction(_ context.Context, cmd *urfavecli.Command) error {
 }
 
 func tasksBriefSetAction(_ context.Context, cmd *urfavecli.Command) error {
-	projectSlug, taskSlug, err := splitTaskID(cmd.Args().First())
+	projectSlug, taskSlug, err := resolveTaskRef(cmd, 0)
 	if err != nil {
 		return err
 	}
-	brief, err := resolveBriefContent(cmd)
+	brief, source, err := resolveBriefContent(cmd)
 	if err != nil {
 		return err
 	}
-	return taskService(cmd).SetBrief(projectSlug, taskSlug, brief)
+	if err := taskService(cmd).SetBrief(projectSlug, taskSlug, brief); err != nil {
+		return err
+	}
+	return renderTaskBriefSummary(cmd, projectSlug, taskSlug, source)
 }
 
 func tasksBriefInitAction(_ context.Context, cmd *urfavecli.Command) error {
-	projectSlug, taskSlug, err := splitTaskID(cmd.Args().First())
+	projectSlug, taskSlug, err := resolveTaskRef(cmd, 0)
 	if err != nil {
 		return err
 	}
@@ -551,11 +600,14 @@ func tasksBriefInitAction(_ context.Context, cmd *urfavecli.Command) error {
 	if strings.TrimSpace(current) != "" && !cmd.Bool("force") {
 		return fmt.Errorf("task brief already exists; use --force to overwrite")
 	}
-	return taskService(cmd).SetBrief(projectSlug, taskSlug, model.TaskBriefTemplate)
+	if err := taskService(cmd).SetBrief(projectSlug, taskSlug, model.TaskBriefTemplate); err != nil {
+		return err
+	}
+	return renderTaskBriefSummary(cmd, projectSlug, taskSlug, "template")
 }
 
 func tasksBriefEditAction(_ context.Context, cmd *urfavecli.Command) error {
-	projectSlug, taskSlug, err := splitTaskID(cmd.Args().First())
+	projectSlug, taskSlug, err := resolveTaskRef(cmd, 0)
 	if err != nil {
 		return err
 	}
@@ -571,7 +623,7 @@ func tasksBriefEditAction(_ context.Context, cmd *urfavecli.Command) error {
 }
 
 func tasksEventAddAction(_ context.Context, cmd *urfavecli.Command) error {
-	projectSlug, taskSlug, err := splitTaskID(cmd.Args().First())
+	projectSlug, taskSlug, err := resolveTaskRef(cmd, 0)
 	if err != nil {
 		return err
 	}
@@ -579,11 +631,14 @@ func tasksEventAddAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	return taskService(cmd).AddEvent(projectSlug, taskSlug, event)
+	if err := taskService(cmd).AddEvent(projectSlug, taskSlug, event); err != nil {
+		return err
+	}
+	return renderTaskEventSummary(cmd, projectSlug, taskSlug, event)
 }
 
 func tasksEventGetAction(_ context.Context, cmd *urfavecli.Command) error {
-	projectSlug, taskSlug, err := splitTaskID(cmd.Args().First())
+	projectSlug, taskSlug, err := resolveTaskRef(cmd, 0)
 	if err != nil {
 		return err
 	}
@@ -602,17 +657,26 @@ func tasksEventGetAction(_ context.Context, cmd *urfavecli.Command) error {
 	})
 }
 
-func tasksTransitionAction(_ context.Context, cmd *urfavecli.Command) error {
-	projectSlug, taskSlug, err := splitTaskID(cmd.Args().Get(0))
+func taskTransitionVerbAction(transition string) func(context.Context, *urfavecli.Command) error {
+	return func(_ context.Context, cmd *urfavecli.Command) error {
+		projectSlug, taskSlug, err := resolveTaskRef(cmd, 0)
+		if err != nil {
+			return err
+		}
+		return runTaskTransition(cmd, projectSlug, taskSlug, transition)
+	}
+}
+
+func runTaskTransition(cmd *urfavecli.Command, projectSlug, taskSlug, transition string) error {
+	task, err := taskService(cmd).Transition(projectSlug, taskSlug, transition)
 	if err != nil {
 		return err
 	}
-	transition := cmd.Args().Get(1)
-	if transition == "" {
-		return fmt.Errorf("transition name is required")
+	artifacts, artifactsErr := runtimeStore(cmd).ListArtifacts(projectSlug, taskSlug)
+	if artifactsErr != nil {
+		return artifactsErr
 	}
-	_, err = taskService(cmd).Transition(projectSlug, taskSlug, transition)
-	return err
+	return renderTaskTransitionSummary(cmd, task, transition, artifacts)
 }
 
 func doctorAction(_ context.Context, cmd *urfavecli.Command) error {
@@ -620,16 +684,26 @@ func doctorAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(commandWriter(cmd), "ok")
+	if _, err = fmt.Fprintln(commandWriter(cmd), "ok"); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(commandWriter(cmd), "Root: %s\n", cmd.String("root"))
 	return err
 }
 
-func splitTaskID(value string) (string, string, error) {
-	parts := strings.SplitN(value, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("task id must be <project>/<task>")
+func resolveTaskRef(cmd *urfavecli.Command, argIndex int) (string, string, error) {
+	value := strings.TrimSpace(cmd.Args().Get(argIndex))
+	projectSlug := strings.TrimSpace(cmd.String("project"))
+	if projectSlug == "" {
+		return "", "", fmt.Errorf("task must be addressed as <task> -p <project>")
 	}
-	return parts[0], parts[1], nil
+	if value == "" {
+		return "", "", fmt.Errorf("task name is required")
+	}
+	if strings.Contains(value, "/") {
+		return "", "", fmt.Errorf("task must be addressed as <task> -p <project>")
+	}
+	return projectSlug, value, nil
 }
 
 func parseVars(values []string) (map[string]string, error) {
@@ -651,23 +725,41 @@ func briefSetFlags() []urfavecli.Flag {
 	}
 }
 
-func resolveBriefContent(cmd *urfavecli.Command) (string, error) {
+func projectFlag() *urfavecli.StringFlag {
+	return &urfavecli.StringFlag{Name: "project", Aliases: []string{"p"}, Usage: "Project slug"}
+}
+
+func resolveBriefContent(cmd *urfavecli.Command) (string, string, error) {
 	content := cmd.String("content")
 	file := cmd.String("file")
 	if strings.TrimSpace(content) == "" && strings.TrimSpace(file) == "" {
-		return "", fmt.Errorf("either --content or --file is required")
+		return "", "", fmt.Errorf("either --content or --file is required")
 	}
 	if strings.TrimSpace(content) != "" && strings.TrimSpace(file) != "" {
-		return "", fmt.Errorf("use either --content or --file, not both")
+		return "", "", fmt.Errorf("use either --content or --file, not both")
 	}
 	if strings.TrimSpace(file) != "" {
+		if strings.TrimSpace(file) == "-" {
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return "", "", err
+			}
+			return string(data), "stdin", nil
+		}
 		data, err := os.ReadFile(file)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		return string(data), nil
+		return string(data), "file", nil
 	}
-	return content, nil
+	if strings.TrimSpace(content) == "-" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return "", "", err
+		}
+		return string(data), "stdin", nil
+	}
+	return content, "inline", nil
 }
 
 func editBriefContent(current, fallback string) (string, error) {
@@ -775,6 +867,110 @@ func commandWriter(cmd *urfavecli.Command) io.Writer {
 		return root.Writer
 	}
 	return os.Stdout
+}
+
+func renderProjectMutationSummary(cmd *urfavecli.Command, project model.ProjectState) error {
+	writer := commandWriter(cmd)
+	if _, err := fmt.Fprintf(writer, "Project: %s\n", project.Slug); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(writer, "Status: %s\n", project.Status); err != nil {
+		return err
+	}
+	return nil
+}
+
+func renderTaskMutationSummary(cmd *urfavecli.Command, task model.TaskState) error {
+	writer := commandWriter(cmd)
+	if _, err := fmt.Fprintf(writer, "Task: %s/%s\n", task.Project, task.Slug); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(writer, "Status: %s\n", task.Status); err != nil {
+		return err
+	}
+	return nil
+}
+
+func renderTaskTransitionSummary(cmd *urfavecli.Command, task model.TaskState, transition string, artifacts map[string]map[string]any) error {
+	writer := commandWriter(cmd)
+	if _, err := fmt.Fprintf(writer, "Task: %s/%s\n", task.Project, task.Slug); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(writer, "Transition: %s\n", transition); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(writer, "Status: %s\n", task.Status); err != nil {
+		return err
+	}
+	if task.LastOp.Step != "" && task.LastOp.Message != "" {
+		if _, err := fmt.Fprintf(writer, "Step %s: %s\n", task.LastOp.Step, task.LastOp.Message); err != nil {
+			return err
+		}
+	}
+	if branch, ok := artifacts["branch"]; ok {
+		if name, ok := branch["name"]; ok {
+			if _, err := fmt.Fprintf(writer, "branch=%v\n", name); err != nil {
+				return err
+			}
+		}
+	}
+	if worktree, ok := artifacts["worktree"]; ok {
+		if path, ok := worktree["path"]; ok {
+			if _, err := fmt.Fprintf(writer, "path=%v\n", path); err != nil {
+				return err
+			}
+		}
+	}
+	for _, warning := range task.LastOp.Warnings {
+		if _, err := fmt.Fprintf(writer, "Warning: %s\n", warning); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func renderProjectBriefSummary(cmd *urfavecli.Command, projectSlug, source string) error {
+	writer := commandWriter(cmd)
+	if _, err := fmt.Fprintf(writer, "Project Brief: %s\n", projectSlug); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(writer, "Source: %s\n", source); err != nil {
+		return err
+	}
+	return nil
+}
+
+func renderTaskBriefSummary(cmd *urfavecli.Command, projectSlug, taskSlug, source string) error {
+	writer := commandWriter(cmd)
+	if _, err := fmt.Fprintf(writer, "Task Brief: %s/%s\n", projectSlug, taskSlug); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(writer, "Source: %s\n", source); err != nil {
+		return err
+	}
+	return nil
+}
+
+func renderProjectEventSummary(cmd *urfavecli.Command, projectSlug string, event model.PayloadEvent) error {
+	writer := commandWriter(cmd)
+	if _, err := fmt.Fprintf(writer, "Project Event: %s\n", projectSlug); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(writer, "Event ID: %s\n", event.ID); err != nil {
+		return err
+	}
+	return nil
+}
+
+func renderTaskEventSummary(cmd *urfavecli.Command, projectSlug, taskSlug string, event model.PayloadEvent) error {
+	writer := commandWriter(cmd)
+	if _, err := fmt.Fprintf(writer, "Task Event: %s/%s\n", projectSlug, taskSlug); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(writer, "Event ID: %s\n", event.ID); err != nil {
+		return err
+	}
+	return nil
 }
 
 func outputFlag() *urfavecli.StringFlag {
@@ -953,7 +1149,41 @@ func allowedTransitionsForStatus(cfg model.Config, status model.TaskStatus) []st
 			allowed = append(allowed, string(name))
 		}
 	}
+	slices.SortStableFunc(allowed, func(a, b string) int {
+		return compareTransitionPriority(a, b)
+	})
 	return allowed
+}
+
+func compareTransitionPriority(left, right string) int {
+	leftRank := transitionPriority(left)
+	rightRank := transitionPriority(right)
+	if leftRank < rightRank {
+		return -1
+	}
+	if leftRank > rightRank {
+		return 1
+	}
+	return strings.Compare(left, right)
+}
+
+func transitionPriority(name string) int {
+	switch name {
+	case "start":
+		return 10
+	case "unblock":
+		return 20
+	case "complete":
+		return 30
+	case "block":
+		return 40
+	case "close":
+		return 50
+	case "cancel":
+		return 90
+	default:
+		return 60
+	}
 }
 
 func statusAllowed(current model.TaskStatus, allowed []model.TaskStatus) bool {
