@@ -134,8 +134,36 @@ func tasksDescribeAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(commandWriter(cmd), "%s/%s\t%s\n", loaded.Project, loaded.Slug, loaded.Status)
-	return err
+	writer := commandWriter(cmd)
+	if _, err := fmt.Fprintf(writer, "%s/%s\t%s\n", loaded.Project, loaded.Slug, loaded.Status); err != nil {
+		return err
+	}
+
+	mrArtifact, err := runtimeStore(cmd).LoadArtifact(project, task, "mr")
+	if err == nil {
+		if value := mrArtifact.Data["status"]; value != "" {
+			if _, err := fmt.Fprintf(writer, "MR Status: %s\n", value); err != nil {
+				return err
+			}
+		}
+		if value := mrArtifact.Data["url"]; value != "" {
+			if _, err := fmt.Fprintf(writer, "MR URL: %s\n", value); err != nil {
+				return err
+			}
+		}
+		if value := mrArtifact.Data["target_branch"]; value != "" {
+			if _, err := fmt.Fprintf(writer, "Target Branch: %s\n", value); err != nil {
+				return err
+			}
+		}
+		if value := mrArtifact.Data["title"]; value != "" {
+			if _, err := fmt.Fprintf(writer, "Title: %s\n", value); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func tasksCreateAction(_ context.Context, cmd *urfavecli.Command) error {

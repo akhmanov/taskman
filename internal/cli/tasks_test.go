@@ -220,6 +220,91 @@ steps:
 	}
 }
 
+func TestTasksDescribeShowsRicherMergeRequestArtifactData(t *testing.T) {
+	root := t.TempDir()
+	writeCLIConfig(t, root, `version: 1
+defaults:
+  project:
+    labels: []
+    traits: {}
+  task:
+    labels: []
+    traits:
+      mr: required
+      worktree: required
+traits:
+  project:
+    preview: [app-api, none]
+  task:
+    mr: [required, not-needed]
+    worktree: [required, optional]
+steps: {}
+`)
+
+	s := store.New(root)
+	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
+		t.Fatalf("scaffold project: %v", err)
+	}
+	if err := s.ScaffoldTask(model.TaskState{
+		Version:  1,
+		Slug:     "cloud-api-auth",
+		Project:  "user-permissions",
+		Repo:     "cloud",
+		Status:   model.TaskStatusDone,
+		Traits:   map[string]string{"mr": "required", "worktree": "required"},
+		Session:  model.TaskSessionState{},
+		MR:       model.TaskMRState{Status: model.MRStatusReady},
+		Worktree: model.TaskWorktreeState{Status: model.WorktreeStatusCleaned},
+	}); err != nil {
+		t.Fatalf("scaffold task: %v", err)
+	}
+	if err := s.SaveArtifact("user-permissions", "cloud-api-auth", "mr", map[string]string{
+		"status":        "ready",
+		"iid":           "123",
+		"url":           "https://gitlab.com/assistant-wi/cloud/-/merge_requests/123",
+		"state":         "opened",
+		"draft":         "false",
+		"source_branch": "task/user-permissions/cloud-api-auth",
+		"target_branch": "main",
+		"title":         "Add auth flow",
+	}); err != nil {
+		t.Fatalf("save mr artifact: %v", err)
+	}
+
+	readCmd := BuildApp()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdout: %v", err)
+	}
+	originalStdout := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = originalStdout }()
+
+	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "describe", "user-permissions/cloud-api-auth"}); err != nil {
+		t.Fatalf("tasks describe: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+
+	out := string(data)
+	for _, want := range []string{
+		"user-permissions/cloud-api-auth",
+		"MR Status: ready",
+		"MR URL: https://gitlab.com/assistant-wi/cloud/-/merge_requests/123",
+		"Target Branch: main",
+		"Title: Add auth flow",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("describe output missing %q: %s", want, out)
+		}
+	}
+}
+
 func writeCLIConfig(t *testing.T, root string, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(root, "config.yaml"), []byte(content), 0o644); err != nil {
