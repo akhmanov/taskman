@@ -21,6 +21,12 @@ Override it with:
 taskman --root /path/to/tasks projects get
 ```
 
+## Install
+
+```bash
+go install github.com/akhmanov/taskman@latest
+```
+
 ## Command shape
 
 ```bash
