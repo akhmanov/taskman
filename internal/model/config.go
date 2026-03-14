@@ -1,6 +1,7 @@
 package model
 
 import (
+	"bytes"
 	"fmt"
 	"text/template"
 )
@@ -66,15 +67,16 @@ func (c Config) Validate() error {
 	for _, candidate := range []struct {
 		name    string
 		pattern string
+		values  any
 	}{
-		{name: "naming.task_slug", pattern: c.Naming.TaskSlug},
-		{name: "naming.branch", pattern: c.Naming.Branch},
-		{name: "naming.worktree", pattern: c.Naming.Worktree},
+		{name: "naming.task_slug", pattern: c.Naming.TaskSlug, values: map[string]string{"repo": "repo", "name": "name"}},
+		{name: "naming.branch", pattern: c.Naming.Branch, values: map[string]any{"project": map[string]string{"slug": "project"}, "task": map[string]string{"slug": "task"}}},
+		{name: "naming.worktree", pattern: c.Naming.Worktree, values: map[string]any{"repo_root": "/tmp/repo", "project": map[string]string{"slug": "project"}, "task": map[string]string{"slug": "task"}}},
 	} {
 		if candidate.pattern == "" {
 			continue
 		}
-		if _, err := template.New(candidate.name).Parse(candidate.pattern); err != nil {
+		if err := validateTemplate(candidate.name, candidate.pattern, candidate.values); err != nil {
 			return fmt.Errorf("%s is invalid: %w", candidate.name, err)
 		}
 	}
@@ -90,6 +92,18 @@ func (c Config) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+func validateTemplate(name, pattern string, values any) error {
+	tmpl, err := template.New(name).Option("missingkey=error").Parse(pattern)
+	if err != nil {
+		return err
+	}
+	var out bytes.Buffer
+	if err := tmpl.Execute(&out, values); err != nil {
+		return err
+	}
 	return nil
 }
 

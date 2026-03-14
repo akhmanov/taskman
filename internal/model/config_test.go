@@ -92,3 +92,28 @@ func TestConfigValidateRejectsUnknownDefaultTraitValues(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestConfigValidateRejectsSemanticallyUnknownTemplateFields(t *testing.T) {
+	cfg := Config{
+		Version: 1,
+		Traits: TraitSchema{
+			Project: map[string][]string{"preview": {"app-api", "none"}},
+			Task: map[string][]string{
+				"mr": {"required", "not-needed"},
+			},
+		},
+		Defaults: Defaults{
+			Project: MetadataDefaults{Traits: map[string]string{"preview": "none"}},
+			Task:    MetadataDefaults{Traits: map[string]string{"mr": "required"}},
+		},
+		Naming: Naming{
+			TaskSlug: "{{ .repo }}-{{ .name }}",
+			Branch:   "task/{{ .project.missing }}/{{ .task.slug }}",
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected semantic template validation error")
+	}
+}
