@@ -12,10 +12,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/assistant-wi/taskman/internal/lifecycle"
-	"github.com/assistant-wi/taskman/internal/model"
-	"github.com/assistant-wi/taskman/internal/steps"
-	"github.com/assistant-wi/taskman/internal/store"
+	"github.com/akhmanov/taskman/internal/lifecycle"
+	"github.com/akhmanov/taskman/internal/model"
+	"github.com/akhmanov/taskman/internal/steps"
+	"github.com/akhmanov/taskman/internal/store"
 	urfavecli "github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
 )

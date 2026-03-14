@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/assistant-wi/taskman/internal/model"
-	"github.com/assistant-wi/taskman/internal/store"
+	"github.com/akhmanov/taskman/internal/model"
+	"github.com/akhmanov/taskman/internal/store"
 )
 
 func TestTasksCreateAndTransitionFlow(t *testing.T) {
