@@ -17,16 +17,19 @@ func TestRunnerExecutesStepWithJSONInputAndStructuredOutput(t *testing.T) {
 	}
 
 	runner := New(tempDir)
-	result, err := runner.RunPhase(context.Background(), model.TaskStartPhase, []model.Step{{
+	result, err := runner.Run(context.Background(), "start", []model.Step{{
 		Name: "emit",
 		Cmd:  []string{script, "--input", "{{ .input_json_path }}"},
-	}}, Context{ProjectSlug: "user-permissions", TaskSlug: "cloud-api-auth"})
+	}}, Context{
+		Project: ProjectContext{Slug: "user-permissions", Status: "active"},
+		Task:    TaskContext{Slug: "cloud-api-auth", Status: "todo"},
+	})
 	if err != nil {
-		t.Fatalf("run phase: %v", err)
+		t.Fatalf("run steps: %v", err)
 	}
 
 	if !result.OK {
-		t.Fatal("expected phase to succeed")
+		t.Fatal("expected execution to succeed")
 	}
 
 	if len(result.Steps) != 1 {
@@ -51,20 +54,50 @@ func TestRunnerStopsAfterFirstFailingStep(t *testing.T) {
 	}
 
 	runner := New(tempDir)
-	result, err := runner.RunPhase(context.Background(), model.TaskDonePhase, []model.Step{
+	result, err := runner.Run(context.Background(), "complete", []model.Step{
 		{Name: "first", Cmd: []string{failScript}},
 		{Name: "second", Cmd: []string{passScript}},
 	}, Context{})
 	if err != nil {
-		t.Fatalf("run phase: %v", err)
+		t.Fatalf("run steps: %v", err)
 	}
 
 	if result.OK {
-		t.Fatal("expected phase failure")
+		t.Fatal("expected execution failure")
 	}
 
 	if result.FailedStep != "first" {
 		t.Fatalf("failed step = %q", result.FailedStep)
+	}
+
+	if len(result.Steps) != 1 {
+		t.Fatalf("steps len = %d, want 1", len(result.Steps))
+	}
+}
+
+func TestRunnerWhenSelectorsUseGenericVarsAndStatuses(t *testing.T) {
+	tempDir := t.TempDir()
+	script := filepath.Join(tempDir, "emit-json.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho '{\"ok\":true,\"message\":\"matched\"}'\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	runner := New(tempDir)
+	result, err := runner.Run(context.Background(), "start", []model.Step{{
+		Name: "emit",
+		When: map[string]string{
+			"task.vars.kind": "feature",
+			"task.status":    "todo",
+			"transition":     "start",
+		},
+		Cmd: []string{script},
+	}}, Context{
+		Project:    ProjectContext{Slug: "user-permissions", Status: "active", Vars: map[string]string{"area": "identity"}},
+		Task:       TaskContext{Slug: "cloud-api-auth", Status: "todo", Vars: map[string]string{"kind": "feature"}},
+		Transition: "start",
+	})
+	if err != nil {
+		t.Fatalf("run steps: %v", err)
 	}
 
 	if len(result.Steps) != 1 {

@@ -1,11 +1,11 @@
 package steps
 
 type Result struct {
-	OK        bool                         `json:"ok"`
-	Message   string                       `json:"message,omitempty"`
-	Facts     map[string]string            `json:"facts,omitempty"`
-	Artifacts map[string]map[string]string `json:"artifacts,omitempty"`
-	Warnings  []string                     `json:"warnings,omitempty"`
+	OK        bool                      `json:"ok"`
+	Message   string                    `json:"message,omitempty"`
+	Facts     map[string]any            `json:"facts,omitempty"`
+	Artifacts map[string]map[string]any `json:"artifacts,omitempty"`
+	Warnings  []string                  `json:"warnings,omitempty"`
 }
 
 type StepExecution struct {

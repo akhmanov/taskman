@@ -22,9 +22,9 @@ func New(workDir string) Runner {
 	return Runner{workDir: workDir}
 }
 
-func (r Runner) RunPhase(ctx context.Context, phase model.Phase, steps []model.Step, input Context) (PhaseResult, error) {
+func (r Runner) Run(ctx context.Context, transition string, steps []model.Step, input Context) (PhaseResult, error) {
 	result := PhaseResult{OK: true}
-	input.Phase = string(phase)
+	input.Transition = transition
 
 	inputPath, err := r.writeInput(input)
 	if err != nil {
@@ -138,26 +138,34 @@ func matchesWhen(selectors map[string]string, input Context) bool {
 
 	for key, expected := range selectors {
 		switch {
-		case strings.HasPrefix(key, "task.traits."):
-			trait := strings.TrimPrefix(key, "task.traits.")
-			if input.TaskTraits[trait] != expected {
+		case strings.HasPrefix(key, "task.vars."):
+			name := strings.TrimPrefix(key, "task.vars.")
+			if input.Task.Vars[name] != expected {
 				return false
 			}
-		case strings.HasPrefix(key, "project.traits."):
-			trait := strings.TrimPrefix(key, "project.traits.")
-			if input.ProjectTraits[trait] != expected {
+		case strings.HasPrefix(key, "project.vars."):
+			name := strings.TrimPrefix(key, "project.vars.")
+			if input.Project.Vars[name] != expected {
 				return false
 			}
-		case key == "task.repo":
-			if input.TaskRepo != expected {
+		case key == "task.status":
+			if input.Task.Status != expected {
+				return false
+			}
+		case key == "project.status":
+			if input.Project.Status != expected {
 				return false
 			}
 		case key == "task.slug":
-			if input.TaskSlug != expected {
+			if input.Task.Slug != expected {
 				return false
 			}
 		case key == "project.slug":
-			if input.ProjectSlug != expected {
+			if input.Project.Slug != expected {
+				return false
+			}
+		case key == "transition":
+			if input.Transition != expected {
 				return false
 			}
 		default:
