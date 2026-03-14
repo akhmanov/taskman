@@ -59,3 +59,12 @@ func isAllowedPayloadEventType(eventType model.PayloadEventType) bool {
 		return false
 	}
 }
+
+func hasEventID(events []model.PayloadEvent, id string) bool {
+	for _, event := range events {
+		if event.ID == id {
+			return true
+		}
+	}
+	return false
+}

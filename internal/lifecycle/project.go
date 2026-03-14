@@ -86,6 +86,13 @@ func (s ProjectService) AddEvent(slug string, event model.PayloadEvent) error {
 	if err := validatePayloadEvent(event); err != nil {
 		return err
 	}
+	existing, err := s.store.ListProjectEvents(slug)
+	if err != nil {
+		return err
+	}
+	if hasEventID(existing, event.ID) {
+		return fmt.Errorf("event id %q already exists", event.ID)
+	}
 	return s.store.AppendProjectEvent(slug, event)
 }
 
