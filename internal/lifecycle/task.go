@@ -74,7 +74,11 @@ func (s TaskService) Create(projectSlug, repo, name string, labels []string, tra
 		return model.TaskState{}, err
 	}
 
-	phaseResult, err := s.runner.RunPhase(context.Background(), model.TaskStartPhase, cfg.Steps[model.TaskStartPhase], stepContext(s.store.Root(), cfg, task))
+	stepInput, err := stepContext(s.store.Root(), cfg, task)
+	if err != nil {
+		return model.TaskState{}, err
+	}
+	phaseResult, err := s.runner.RunPhase(context.Background(), model.TaskStartPhase, cfg.Steps[model.TaskStartPhase], stepInput)
 	if err != nil {
 		return model.TaskState{}, err
 	}
@@ -105,7 +109,11 @@ func (s TaskService) Done(projectSlug, taskSlug string) (model.TaskState, error)
 		return model.TaskState{}, err
 	}
 
-	phaseResult, err := s.runner.RunPhase(context.Background(), model.TaskDonePhase, cfg.Steps[model.TaskDonePhase], stepContext(s.store.Root(), cfg, task))
+	stepInput, err := stepContext(s.store.Root(), cfg, task)
+	if err != nil {
+		return model.TaskState{}, err
+	}
+	phaseResult, err := s.runner.RunPhase(context.Background(), model.TaskDonePhase, cfg.Steps[model.TaskDonePhase], stepInput)
 	if err != nil {
 		return model.TaskState{}, err
 	}
@@ -155,7 +163,11 @@ func (s TaskService) Cleanup(projectSlug, taskSlug string) (model.TaskState, err
 		return task, errors.New("task cleanup requires done or cancelled status")
 	}
 
-	phaseResult, err := s.runner.RunPhase(context.Background(), model.TaskCleanupPhase, cfg.Steps[model.TaskCleanupPhase], stepContext(s.store.Root(), cfg, task))
+	stepInput, err := stepContext(s.store.Root(), cfg, task)
+	if err != nil {
+		return model.TaskState{}, err
+	}
+	phaseResult, err := s.runner.RunPhase(context.Background(), model.TaskCleanupPhase, cfg.Steps[model.TaskCleanupPhase], stepInput)
 	if err != nil {
 		return model.TaskState{}, err
 	}
@@ -187,7 +199,7 @@ func renderTaskSlug(pattern, repo, name string) (string, error) {
 		return repo + "-" + name, nil
 	}
 
-	tmpl, err := template.New("task_slug").Parse(pattern)
+	tmpl, err := template.New("task_slug").Option("missingkey=error").Parse(pattern)
 	if err != nil {
 		return "", err
 	}
@@ -218,17 +230,23 @@ func initialMRStatus(traits map[string]string) model.MRStatus {
 	return model.MRStatusMissing
 }
 
-func stepContext(runtimeRoot string, cfg model.Config, task model.TaskState) steps.Context {
+func stepContext(runtimeRoot string, cfg model.Config, task model.TaskState) (steps.Context, error) {
 	repoRoot := resolveRepoRoot(runtimeRoot, cfg, task.Repo)
-	branchName := renderStringTemplate(cfg.Naming.Branch, map[string]any{
+	branchName, err := renderStringTemplate(cfg.Naming.Branch, map[string]any{
 		"project": map[string]string{"slug": task.Project},
 		"task":    map[string]string{"slug": task.Slug},
 	})
-	worktreePath := renderStringTemplate(cfg.Naming.Worktree, map[string]any{
+	if err != nil {
+		return steps.Context{}, err
+	}
+	worktreePath, err := renderStringTemplate(cfg.Naming.Worktree, map[string]any{
 		"repo_root": repoRoot,
 		"project":   map[string]string{"slug": task.Project},
 		"task":      map[string]string{"slug": task.Slug},
 	})
+	if err != nil {
+		return steps.Context{}, err
+	}
 	taskDir := filepath.Join(runtimeRoot, "projects", "active", task.Project, "tasks", task.Slug)
 	return steps.Context{
 		RuntimeRoot:  runtimeRoot,
@@ -241,7 +259,7 @@ func stepContext(runtimeRoot string, cfg model.Config, task model.TaskState) ste
 		WorktreePath: worktreePath,
 		TaskDir:      taskDir,
 		ArtifactsDir: filepath.Join(taskDir, "artifacts"),
-	}
+	}, nil
 }
 
 func (s TaskService) syncArtifacts(task *model.TaskState, result steps.PhaseResult) {
@@ -282,19 +300,19 @@ func resolveRepoRoot(runtimeRoot string, cfg model.Config, repo string) string {
 	return filepath.Clean(filepath.Join(runtimeRoot, "..", repo))
 }
 
-func renderStringTemplate(pattern string, values map[string]any) string {
+func renderStringTemplate(pattern string, values map[string]any) (string, error) {
 	if pattern == "" {
-		return ""
+		return "", nil
 	}
-	tmpl, err := template.New("runtime").Parse(pattern)
+	tmpl, err := template.New("runtime").Option("missingkey=error").Parse(pattern)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	var builder strings.Builder
 	if err := tmpl.Execute(&builder, values); err != nil {
-		return ""
+		return "", err
 	}
-	return builder.String()
+	return builder.String(), nil
 }
 
 func applyFailedOperation(task *model.TaskState, cmd string, result steps.PhaseResult) {
