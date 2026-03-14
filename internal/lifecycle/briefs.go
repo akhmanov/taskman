@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/assistant-wi/taskman/internal/model"
+	"github.com/akhmanov/taskman/internal/model"
 )
 
 var projectBriefSections = []string{
