@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/assistant-wi/taskman/internal/lifecycle"
@@ -23,7 +25,7 @@ func BuildApp() *urfavecli.Command {
 		Commands: []*urfavecli.Command{
 			{Name: "get", Usage: "List projects", Flags: []urfavecli.Flag{outputFlag()}, Action: projectsGetAction},
 			{Name: "describe", Usage: "Describe a project", ArgsUsage: "<project>", Flags: []urfavecli.Flag{outputFlag()}, Action: projectsDescribeAction},
-			{Name: "create", Usage: "Create a project", ArgsUsage: "<project>", Flags: []urfavecli.Flag{&urfavecli.StringSliceFlag{Name: "label"}, &urfavecli.StringSliceFlag{Name: "trait"}}, Action: projectsCreateAction},
+			{Name: "create", Usage: "Create a project", ArgsUsage: "<project>", Flags: []urfavecli.Flag{&urfavecli.StringSliceFlag{Name: "label"}, &urfavecli.StringSliceFlag{Name: "var"}}, Action: projectsCreateAction},
 			{Name: "archive", Usage: "Archive a project", ArgsUsage: "<project>", Action: projectsArchiveAction},
 		},
 	}
@@ -34,19 +36,15 @@ func BuildApp() *urfavecli.Command {
 		Commands: []*urfavecli.Command{
 			{Name: "get", Usage: "List tasks", Flags: []urfavecli.Flag{&urfavecli.StringFlag{Name: "project"}, &urfavecli.StringFlag{Name: "status"}, outputFlag()}, Action: tasksGetAction},
 			{Name: "describe", Usage: "Describe a task", ArgsUsage: "<project>/<task>", Flags: []urfavecli.Flag{outputFlag()}, Action: tasksDescribeAction},
-			{Name: "create", Usage: "Create a task", Flags: []urfavecli.Flag{&urfavecli.StringFlag{Name: "project", Required: true}, &urfavecli.StringFlag{Name: "repo", Required: true}, &urfavecli.StringFlag{Name: "name", Required: true}, &urfavecli.StringSliceFlag{Name: "label"}, &urfavecli.StringSliceFlag{Name: "trait"}}, Action: tasksCreateAction},
-			{Name: "block", Usage: "Block a task", ArgsUsage: "<project>/<task>", Action: tasksBlockAction},
-			{Name: "unblock", Usage: "Unblock a task", ArgsUsage: "<project>/<task>", Action: tasksUnblockAction},
-			{Name: "done", Usage: "Complete a task", ArgsUsage: "<project>/<task>", Action: tasksDoneAction},
-			{Name: "cancel", Usage: "Cancel a task", ArgsUsage: "<project>/<task>", Action: tasksCancelAction},
-			{Name: "cleanup", Usage: "Cleanup a task", ArgsUsage: "<project>/<task>", Action: tasksCleanupAction},
+			{Name: "create", Usage: "Create a task", Flags: []urfavecli.Flag{&urfavecli.StringFlag{Name: "project", Required: true}, &urfavecli.StringFlag{Name: "name", Required: true}, &urfavecli.StringSliceFlag{Name: "label"}, &urfavecli.StringSliceFlag{Name: "var"}}, Action: tasksCreateAction},
+			{Name: "transition", Usage: "Run a task transition", ArgsUsage: "<project>/<task> <transition>", Action: tasksTransitionAction},
 		},
 	}
 
 	return &urfavecli.Command{
 		Name:        "taskman",
 		Usage:       "Task workflow engine for projects, tasks, and lifecycle operations",
-		Description: "Resources: projects, tasks, doctor\n\nExamples:\n  taskman projects get\n  taskman projects create user-permissions\n  taskman projects archive user-permissions\n  taskman tasks get --project user-permissions --status active\n  taskman tasks describe user-permissions/cloud-api-auth\n  taskman tasks done user-permissions/cloud-api-auth\n  taskman tasks cleanup user-permissions/cloud-api-auth",
+		Description: "Resources: projects, tasks, doctor\n\nExamples:\n  taskman projects get\n  taskman projects create user-permissions\n  taskman projects archive user-permissions\n  taskman tasks get --project user-permissions --status active\n  taskman tasks describe user-permissions/api-auth\n  taskman tasks transition user-permissions/api-auth start",
 		Flags: []urfavecli.Flag{
 			&urfavecli.StringFlag{Name: "root", Value: "../tasks", Usage: "Path to the runtime tasks root"},
 		},
@@ -79,7 +77,7 @@ func projectsGetAction(_ context.Context, cmd *urfavecli.Command) error {
 	}
 	return writeOutput(cmd, projects, func(writer io.Writer) error {
 		for _, project := range projects {
-			if _, err := fmt.Fprintf(writer, "%s\t%s\ttodo=%d active=%d blocked=%d done=%d cancelled=%d\n", project.Slug, project.Status, project.Tasks.Todo, project.Tasks.Active, project.Tasks.Blocked, project.Tasks.Done, project.Tasks.Cancelled); err != nil {
+			if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\n", project.Slug, project.Status, formatCounts(project.Tasks)); err != nil {
 				return err
 			}
 		}
@@ -104,16 +102,12 @@ func projectsDescribeAction(_ context.Context, cmd *urfavecli.Command) error {
 				return err
 			}
 		}
-		if len(project.Traits) > 0 {
-			parts := make([]string, 0, len(project.Traits))
-			for key, value := range project.Traits {
-				parts = append(parts, fmt.Sprintf("%s=%s", key, value))
-			}
-			if _, err := fmt.Fprintf(writer, "Traits: %s\n", strings.Join(parts, ", ")); err != nil {
+		if len(project.Vars) > 0 {
+			if _, err := fmt.Fprintf(writer, "Vars: %s\n", formatStringMap(project.Vars)); err != nil {
 				return err
 			}
 		}
-		if _, err := fmt.Fprintf(writer, "Tasks: todo=%d active=%d blocked=%d done=%d cancelled=%d\n", project.Tasks.Todo, project.Tasks.Active, project.Tasks.Blocked, project.Tasks.Done, project.Tasks.Cancelled); err != nil {
+		if _, err := fmt.Fprintf(writer, "Tasks: %s\n", formatCounts(project.Tasks)); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintf(writer, "Archive Ready: %t\n", project.Archive.Ready); err != nil {
@@ -129,11 +123,11 @@ func projectsDescribeAction(_ context.Context, cmd *urfavecli.Command) error {
 }
 
 func projectsCreateAction(_ context.Context, cmd *urfavecli.Command) error {
-	traits, err := parseTraits(cmd.StringSlice("trait"))
+	vars, err := parseVars(cmd.StringSlice("var"))
 	if err != nil {
 		return err
 	}
-	_, err = projectService(cmd).Create(cmd.Args().First(), cmd.StringSlice("label"), traits)
+	_, err = projectService(cmd).Create(cmd.Args().First(), cmd.StringSlice("label"), vars)
 	return err
 }
 
@@ -174,7 +168,10 @@ func tasksDescribeAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	artifacts := loadArtifacts(runtimeStore(cmd), project, task)
+	artifacts, err := runtimeStore(cmd).ListArtifacts(project, task)
+	if err != nil {
+		return err
+	}
 	return writeOutput(cmd, map[string]any{
 		"task":      loaded,
 		"artifacts": artifacts,
@@ -182,57 +179,14 @@ func tasksDescribeAction(_ context.Context, cmd *urfavecli.Command) error {
 		if _, err := fmt.Fprintf(writer, "%s/%s\t%s\n", loaded.Project, loaded.Slug, loaded.Status); err != nil {
 			return err
 		}
-		if repository := artifacts["repository"]; repository != nil {
-			if value := repository["name"]; value != "" {
-				if _, err := fmt.Fprintf(writer, "Repository: %s\n", value); err != nil {
-					return err
-				}
-			}
-			if value := repository["root"]; value != "" {
-				if _, err := fmt.Fprintf(writer, "Repository Root: %s\n", value); err != nil {
-					return err
-				}
+		if len(loaded.Vars) > 0 {
+			if _, err := fmt.Fprintf(writer, "Vars: %s\n", formatStringMap(loaded.Vars)); err != nil {
+				return err
 			}
 		}
-		if branch := artifacts["branch"]; branch != nil {
-			if value := branch["name"]; value != "" {
-				if _, err := fmt.Fprintf(writer, "Branch: %s\n", value); err != nil {
-					return err
-				}
-			}
-		}
-		if worktree := artifacts["worktree"]; worktree != nil {
-			if value := worktree["status"]; value != "" {
-				if _, err := fmt.Fprintf(writer, "Worktree Status: %s\n", value); err != nil {
-					return err
-				}
-			}
-			if value := worktree["path"]; value != "" {
-				if _, err := fmt.Fprintf(writer, "Worktree Path: %s\n", value); err != nil {
-					return err
-				}
-			}
-		}
-		if mrArtifact := artifacts["mr"]; mrArtifact != nil {
-			if value := mrArtifact["status"]; value != "" {
-				if _, err := fmt.Fprintf(writer, "MR Status: %s\n", value); err != nil {
-					return err
-				}
-			}
-			if value := mrArtifact["url"]; value != "" {
-				if _, err := fmt.Fprintf(writer, "MR URL: %s\n", value); err != nil {
-					return err
-				}
-			}
-			if value := mrArtifact["target_branch"]; value != "" {
-				if _, err := fmt.Fprintf(writer, "Target Branch: %s\n", value); err != nil {
-					return err
-				}
-			}
-			if value := mrArtifact["title"]; value != "" {
-				if _, err := fmt.Fprintf(writer, "Title: %s\n", value); err != nil {
-					return err
-				}
+		for _, kind := range sortedKeys(artifacts) {
+			if _, err := fmt.Fprintf(writer, "Artifact %s: %s\n", kind, formatMap(artifacts[kind])); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -240,74 +194,24 @@ func tasksDescribeAction(_ context.Context, cmd *urfavecli.Command) error {
 }
 
 func tasksCreateAction(_ context.Context, cmd *urfavecli.Command) error {
-	traits, err := parseTraits(cmd.StringSlice("trait"))
+	vars, err := parseVars(cmd.StringSlice("var"))
 	if err != nil {
 		return err
 	}
-	_, err = taskService(cmd).Create(cmd.String("project"), cmd.String("repo"), cmd.String("name"), cmd.StringSlice("label"), traits)
+	_, err = taskService(cmd).Create(cmd.String("project"), cmd.String("name"), cmd.StringSlice("label"), vars)
 	return err
 }
 
-func tasksBlockAction(_ context.Context, cmd *urfavecli.Command) error {
-	projectSlug, taskSlug, err := splitTaskID(cmd.Args().First())
+func tasksTransitionAction(_ context.Context, cmd *urfavecli.Command) error {
+	projectSlug, taskSlug, err := splitTaskID(cmd.Args().Get(0))
 	if err != nil {
 		return err
 	}
-	task, err := runtimeStore(cmd).LoadTask(projectSlug, taskSlug)
-	if err != nil {
-		return err
+	transition := cmd.Args().Get(1)
+	if transition == "" {
+		return fmt.Errorf("transition name is required")
 	}
-	reason := "blocked by command"
-	task.Status = model.TaskStatusBlocked
-	task.Blocker = &reason
-	task.LastOp = model.OperationState{Cmd: "tasks.block", OK: true}
-	return runtimeStore(cmd).SaveTask(task)
-}
-
-func tasksUnblockAction(_ context.Context, cmd *urfavecli.Command) error {
-	projectSlug, taskSlug, err := splitTaskID(cmd.Args().First())
-	if err != nil {
-		return err
-	}
-	task, err := runtimeStore(cmd).LoadTask(projectSlug, taskSlug)
-	if err != nil {
-		return err
-	}
-	task.Status = model.TaskStatusActive
-	task.Blocker = nil
-	task.LastOp = model.OperationState{Cmd: "tasks.unblock", OK: true}
-	return runtimeStore(cmd).SaveTask(task)
-}
-
-func tasksDoneAction(_ context.Context, cmd *urfavecli.Command) error {
-	projectSlug, taskSlug, err := splitTaskID(cmd.Args().First())
-	if err != nil {
-		return err
-	}
-	_, err = taskService(cmd).Done(projectSlug, taskSlug)
-	return err
-}
-
-func tasksCancelAction(_ context.Context, cmd *urfavecli.Command) error {
-	projectSlug, taskSlug, err := splitTaskID(cmd.Args().First())
-	if err != nil {
-		return err
-	}
-	task, err := runtimeStore(cmd).LoadTask(projectSlug, taskSlug)
-	if err != nil {
-		return err
-	}
-	task.Status = model.TaskStatusCancelled
-	task.LastOp = model.OperationState{Cmd: "tasks.cancel", OK: true}
-	return runtimeStore(cmd).SaveTask(task)
-}
-
-func tasksCleanupAction(_ context.Context, cmd *urfavecli.Command) error {
-	projectSlug, taskSlug, err := splitTaskID(cmd.Args().First())
-	if err != nil {
-		return err
-	}
-	_, err = taskService(cmd).Cleanup(projectSlug, taskSlug)
+	_, err = taskService(cmd).Transition(projectSlug, taskSlug, transition)
 	return err
 }
 
@@ -328,16 +232,16 @@ func splitTaskID(value string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-func parseTraits(values []string) (map[string]string, error) {
-	traits := map[string]string{}
+func parseVars(values []string) (map[string]string, error) {
+	vars := map[string]string{}
 	for _, value := range values {
 		parts := strings.SplitN(value, "=", 2)
 		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			return nil, fmt.Errorf("trait must be key=value")
+			return nil, fmt.Errorf("var must be key=value")
 		}
-		traits[parts[0]] = parts[1]
+		vars[parts[0]] = parts[1]
 	}
-	return traits, nil
+	return vars, nil
 }
 
 func commandWriter(cmd *urfavecli.Command) io.Writer {
@@ -375,13 +279,35 @@ func writeOutput(cmd *urfavecli.Command, value any, renderText func(io.Writer) e
 	}
 }
 
-func loadArtifacts(s store.Store, project, task string) map[string]map[string]string {
-	artifacts := map[string]map[string]string{}
-	for _, kind := range []string{"repository", "branch", "worktree", "mr"} {
-		artifact, err := s.LoadArtifact(project, task, kind)
-		if err == nil && len(artifact.Data) > 0 {
-			artifacts[kind] = artifact.Data
-		}
+func formatCounts(counts model.TaskCounts) string {
+	if len(counts) == 0 {
+		return ""
 	}
-	return artifacts
+	parts := make([]string, 0, len(counts))
+	for _, key := range sortedKeys(counts) {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, counts[key]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatMap(values map[string]any) string {
+	parts := make([]string, 0, len(values))
+	for _, key := range sortedKeys(values) {
+		parts = append(parts, fmt.Sprintf("%s=%v", key, values[key]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatStringMap(values map[string]string) string {
+	parts := make([]string, 0, len(values))
+	for _, key := range sortedKeys(values) {
+		parts = append(parts, fmt.Sprintf("%s=%s", key, values[key]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func sortedKeys[K ~string, V any](values map[K]V) []K {
+	keys := slices.Collect(maps.Keys(values))
+	slices.Sort(keys)
+	return keys
 }

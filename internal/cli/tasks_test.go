@@ -13,132 +13,112 @@ import (
 	"github.com/assistant-wi/taskman/internal/store"
 )
 
-func TestTasksCreateAndDoneFlow(t *testing.T) {
+func TestTasksCreateAndTransitionFlow(t *testing.T) {
 	root := t.TempDir()
 	writeCLIConfig(t, root, `version: 1
 defaults:
   project:
     labels: []
-    traits: {}
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars:
+      kind: feature
+vars:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-naming:
-  task_slug: "{{ .repo }}-{{ .name }}"
-steps:
-  task_start:
-    - name: noop
-      cmd: [./bin/noop]
-  task_done:
-    - name: ready_mr
-      when:
-        task.traits.mr: required
-      cmd: [./bin/ready-mr]
-  task_cleanup:
-    - name: cleanup_worktree
-      cmd: [./bin/cleanup-worktree]
+    kind:
+      allowed: [feature, chore]
+workflow:
+  task:
+    statuses: [todo, active, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
+        steps:
+          - name: write-summary
+            cmd: [./bin/start-task]
 `)
-	writeCLIExecutable(t, filepath.Join(root, "bin", "noop"), "#!/bin/sh\necho '{\"ok\":true,\"message\":\"created\"}'\n")
-	writeCLIExecutable(t, filepath.Join(root, "bin", "ready-mr"), "#!/bin/sh\necho '{\"ok\":true,\"message\":\"mr ready\"}'\n")
-	writeCLIExecutable(t, filepath.Join(root, "bin", "cleanup-worktree"), "#!/bin/sh\necho '{\"ok\":true,\"message\":\"cleaned\",\"artifacts\":{\"worktree\":{\"status\":\"cleaned\",\"path\":\"/tmp/worktree\"}}}'\n")
+	writeCLIExecutable(t, filepath.Join(root, "bin", "start-task"), "#!/bin/sh\necho '{\"ok\":true,\"message\":\"started\",\"artifacts\":{\"summary\":{\"state\":\"started\"}}}'\n")
 
 	cmd := BuildApp()
 	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "create", "user-permissions"}); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "create", "--project", "user-permissions", "--repo", "cloud", "--name", "api-auth"}); err != nil {
+	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "create", "--project", "user-permissions", "--name", "api-auth"}); err != nil {
 		t.Fatalf("create task: %v", err)
-	}
-	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "done", "user-permissions/cloud-api-auth"}); err != nil {
-		t.Fatalf("done task: %v", err)
 	}
 
 	s := store.New(root)
-	task, err := s.LoadTask("user-permissions", "cloud-api-auth")
+	task, err := s.LoadTask("user-permissions", "api-auth")
 	if err != nil {
-		t.Fatalf("load task: %v", err)
+		t.Fatalf("load task after create: %v", err)
+	}
+	if task.Status != model.TaskStatus("todo") {
+		t.Fatalf("status after create = %q, want todo", task.Status)
 	}
 
-	if task.Status != model.TaskStatusDone {
-		t.Fatalf("status = %q, want done", task.Status)
+	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "transition", "user-permissions/api-auth", "start"}); err != nil {
+		t.Fatalf("transition task: %v", err)
 	}
 
-	if task.LastOp.Cmd != "tasks.done" || !task.LastOp.OK {
+	task, err = s.LoadTask("user-permissions", "api-auth")
+	if err != nil {
+		t.Fatalf("load task after transition: %v", err)
+	}
+	if task.Status != model.TaskStatus("active") {
+		t.Fatalf("status after transition = %q, want active", task.Status)
+	}
+	if task.LastOp.Cmd != "tasks.transition" || !task.LastOp.OK {
 		t.Fatalf("last op = %+v", task.LastOp)
 	}
-	if task.Session.Active != "" {
-		t.Fatalf("active session = %q, want empty", task.Session.Active)
-	}
-	if task.Session.LastCompleted == nil || *task.Session.LastCompleted != "S-001" {
-		t.Fatalf("last completed = %#v", task.Session.LastCompleted)
-	}
 
-	sessionPath := filepath.Join(root, "projects", "active", "user-permissions", "tasks", "cloud-api-auth", "sessions", "S-001", "state.yaml")
-	if _, err := os.Stat(sessionPath); err != nil {
-		t.Fatalf("session state missing: %v", err)
-	}
-
-	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "cleanup", "user-permissions/cloud-api-auth"}); err != nil {
-		t.Fatalf("cleanup task: %v", err)
-	}
-
-	task, err = s.LoadTask("user-permissions", "cloud-api-auth")
+	artifact, err := s.LoadArtifact("user-permissions", "api-auth", "summary")
 	if err != nil {
-		t.Fatalf("reload task after cleanup: %v", err)
+		t.Fatalf("load artifact: %v", err)
 	}
-
-	if task.Worktree.Status != model.WorktreeStatusCleaned {
-		t.Fatalf("cleanup worktree status = %q", task.Worktree.Status)
-	}
-	if task.LastOp.Cmd != "tasks.cleanup" || !task.LastOp.OK {
-		t.Fatalf("cleanup last op = %+v", task.LastOp)
+	if artifact.Data["state"] != "started" {
+		t.Fatalf("summary artifact state = %q", artifact.Data["state"])
 	}
 }
 
-func TestTasksCreatePersistsLabelsAndTraits(t *testing.T) {
+func TestTasksCreatePersistsLabelsAndVars(t *testing.T) {
 	root := t.TempDir()
 	writeCLIConfig(t, root, `version: 1
 defaults:
   project:
     labels: []
-    traits: {}
+    vars: {}
   task:
     labels: [backend]
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars:
+      kind: feature
+vars:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-naming:
-  task_slug: "{{ .repo }}-{{ .name }}"
-steps:
-  task_start:
-    - name: noop
-      cmd: [./bin/noop]
+    kind:
+      allowed: [feature, chore]
+workflow:
+  task:
+    statuses: [todo, active, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
 `)
-	writeCLIExecutable(t, filepath.Join(root, "bin", "noop"), "#!/bin/sh\necho '{\"ok\":true,\"message\":\"created\"}'\n")
 
 	cmd := BuildApp()
 	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "create", "user-permissions"}); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "create", "--project", "user-permissions", "--repo", "cloud", "--name", "api-auth", "--label", "auth", "--trait", "mr=not-needed"}); err != nil {
+	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "create", "--project", "user-permissions", "--name", "api-auth", "--label", "auth", "--var", "kind=chore"}); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
 
-	task, err := store.New(root).LoadTask("user-permissions", "cloud-api-auth")
+	task, err := store.New(root).LoadTask("user-permissions", "api-auth")
 	if err != nil {
 		t.Fatalf("load task: %v", err)
 	}
@@ -146,11 +126,8 @@ steps:
 	if len(task.Labels) != 2 || task.Labels[0] != "backend" || task.Labels[1] != "auth" {
 		t.Fatalf("labels = %#v", task.Labels)
 	}
-	if task.Traits["mr"] != "not-needed" {
-		t.Fatalf("mr trait = %q", task.Traits["mr"])
-	}
-	if task.MR.Status != model.MRStatusNotNeeded {
-		t.Fatalf("mr status = %q", task.MR.Status)
+	if task.Vars["kind"] != "chore" {
+		t.Fatalf("kind var = %q", task.Vars["kind"])
 	}
 }
 
@@ -160,26 +137,20 @@ func TestTasksGetWithoutProjectListsAcrossProjects(t *testing.T) {
 defaults:
   project:
     labels: []
-    traits: {}
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars: {}
+workflow:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-naming:
-  task_slug: "{{ .repo }}-{{ .name }}"
-steps:
-  task_start:
-    - name: noop
-      cmd: [./bin/noop]
+    statuses: [todo, active, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
 `)
-	writeCLIExecutable(t, filepath.Join(root, "bin", "noop"), "#!/bin/sh\necho '{\"ok\":true,\"message\":\"created\"}'\n")
 
 	cmd := BuildApp()
 	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "create", "alpha"}); err != nil {
@@ -188,10 +159,10 @@ steps:
 	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "create", "beta"}); err != nil {
 		t.Fatalf("create beta project: %v", err)
 	}
-	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "create", "--project", "alpha", "--repo", "cloud", "--name", "api-auth"}); err != nil {
+	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "create", "--project", "alpha", "--name", "api-auth"}); err != nil {
 		t.Fatalf("create alpha task: %v", err)
 	}
-	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "create", "--project", "beta", "--repo", "taskman", "--name", "engine"}); err != nil {
+	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "create", "--project", "beta", "--name", "engine"}); err != nil {
 		t.Fatalf("create beta task: %v", err)
 	}
 
@@ -204,7 +175,7 @@ steps:
 	os.Stdout = w
 	defer func() { os.Stdout = originalStdout }()
 
-	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "get", "--status", "active"}); err != nil {
+	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "get", "--status", "todo"}); err != nil {
 		t.Fatalf("tasks get global: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -216,30 +187,30 @@ steps:
 	}
 
 	out := string(data)
-	if !strings.Contains(out, "alpha/cloud-api-auth") || !strings.Contains(out, "beta/taskman-engine") {
+	if !strings.Contains(out, "alpha/api-auth") || !strings.Contains(out, "beta/engine") {
 		t.Fatalf("global tasks get missing expected tasks: %s", out)
 	}
 }
 
-func TestTasksDescribeShowsRicherMergeRequestArtifactData(t *testing.T) {
+func TestTasksDescribeShowsGenericArtifactData(t *testing.T) {
 	root := t.TempDir()
 	writeCLIConfig(t, root, `version: 1
 defaults:
   project:
     labels: []
-    traits: {}
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars: {}
+workflow:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-steps: {}
+    statuses: [todo, active, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
 `)
 
 	s := store.New(root)
@@ -247,46 +218,19 @@ steps: {}
 		t.Fatalf("scaffold project: %v", err)
 	}
 	if err := s.ScaffoldTask(model.TaskState{
-		Version:  1,
-		Slug:     "cloud-api-auth",
-		Project:  "user-permissions",
-		Repo:     "cloud",
-		Status:   model.TaskStatusDone,
-		Traits:   map[string]string{"mr": "required", "worktree": "required"},
-		Session:  model.TaskSessionState{},
-		MR:       model.TaskMRState{Status: model.MRStatusReady},
-		Worktree: model.TaskWorktreeState{Status: model.WorktreeStatusCleaned},
+		Version: 1,
+		Slug:    "api-auth",
+		Project: "user-permissions",
+		Status:  model.TaskStatus("active"),
+		Vars:    map[string]string{"kind": "feature"},
 	}); err != nil {
 		t.Fatalf("scaffold task: %v", err)
 	}
-	if err := s.SaveArtifact("user-permissions", "cloud-api-auth", "mr", map[string]string{
-		"status":        "ready",
-		"iid":           "123",
-		"url":           "https://gitlab.com/assistant-wi/cloud/-/merge_requests/123",
-		"state":         "opened",
-		"draft":         "false",
-		"source_branch": "task/user-permissions/cloud-api-auth",
-		"target_branch": "main",
-		"title":         "Add auth flow",
+	if err := s.SaveArtifact("user-permissions", "api-auth", "summary", map[string]any{
+		"state": "ready",
+		"url":   "https://example.test/tasks/api-auth",
 	}); err != nil {
-		t.Fatalf("save mr artifact: %v", err)
-	}
-	if err := s.SaveArtifact("user-permissions", "cloud-api-auth", "repository", map[string]string{
-		"root": "/repo/cloud",
-		"name": "cloud",
-	}); err != nil {
-		t.Fatalf("save repository artifact: %v", err)
-	}
-	if err := s.SaveArtifact("user-permissions", "cloud-api-auth", "branch", map[string]string{
-		"name": "task/user-permissions/cloud-api-auth",
-	}); err != nil {
-		t.Fatalf("save branch artifact: %v", err)
-	}
-	if err := s.SaveArtifact("user-permissions", "cloud-api-auth", "worktree", map[string]string{
-		"path":   "/repo/cloud/.worktrees/user-permissions/cloud-api-auth",
-		"status": "cleaned",
-	}); err != nil {
-		t.Fatalf("save worktree artifact: %v", err)
+		t.Fatalf("save summary artifact: %v", err)
 	}
 
 	readCmd := BuildApp()
@@ -298,7 +242,7 @@ steps: {}
 	os.Stdout = w
 	defer func() { os.Stdout = originalStdout }()
 
-	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "describe", "user-permissions/cloud-api-auth"}); err != nil {
+	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "describe", "user-permissions/api-auth"}); err != nil {
 		t.Fatalf("tasks describe: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -311,14 +255,9 @@ steps: {}
 
 	out := string(data)
 	for _, want := range []string{
-		"user-permissions/cloud-api-auth",
-		"MR Status: ready",
-		"MR URL: https://gitlab.com/assistant-wi/cloud/-/merge_requests/123",
-		"Repository Root: /repo/cloud",
-		"Branch: task/user-permissions/cloud-api-auth",
-		"Worktree Path: /repo/cloud/.worktrees/user-permissions/cloud-api-auth",
-		"Target Branch: main",
-		"Title: Add auth flow",
+		"user-permissions/api-auth",
+		"Vars: kind=feature",
+		"Artifact summary: state=ready, url=https://example.test/tasks/api-auth",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("describe output missing %q: %s", want, out)
@@ -332,25 +271,25 @@ func TestTasksGetSupportsJSONOutput(t *testing.T) {
 defaults:
   project:
     labels: []
-    traits: {}
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars: {}
+workflow:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-steps: {}
+    statuses: [todo, active, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
 `)
 	s := store.New(root)
 	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "alpha", Status: model.ProjectStatusActive}); err != nil {
 		t.Fatalf("scaffold project: %v", err)
 	}
-	if err := s.ScaffoldTask(model.TaskState{Version: 1, Slug: "cloud-api-auth", Project: "alpha", Repo: "cloud", Status: model.TaskStatusActive}); err != nil {
+	if err := s.ScaffoldTask(model.TaskState{Version: 1, Slug: "api-auth", Project: "alpha", Status: model.TaskStatus("todo")}); err != nil {
 		t.Fatalf("scaffold task: %v", err)
 	}
 
@@ -381,7 +320,7 @@ steps: {}
 	if len(payload) != 1 {
 		t.Fatalf("payload len = %d", len(payload))
 	}
-	if payload[0]["slug"] != "cloud-api-auth" {
+	if payload[0]["slug"] != "api-auth" {
 		t.Fatalf("slug = %#v", payload[0]["slug"])
 	}
 }

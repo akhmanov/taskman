@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestTasksCreateHelpExplainsMetadataFlags(t *testing.T) {
+func TestTasksCreateHelpExplainsGenericMetadataFlags(t *testing.T) {
 	cmd := BuildApp()
 	var stdout bytes.Buffer
 	cmd.Writer = &stdout
@@ -18,26 +18,28 @@ func TestTasksCreateHelpExplainsMetadataFlags(t *testing.T) {
 	}
 
 	help := stdout.String()
-	for _, want := range []string{"--project", "--repo", "--name", "--label", "--trait"} {
+	for _, want := range []string{"--project", "--name", "--label", "--var"} {
 		if !bytes.Contains([]byte(help), []byte(want)) {
 			t.Fatalf("help missing %q: %s", want, help)
 		}
 	}
 }
 
-func TestTasksDoneHelpShowsResourceIDShape(t *testing.T) {
+func TestTasksTransitionHelpShowsTransitionArguments(t *testing.T) {
 	cmd := BuildApp()
 	var stdout bytes.Buffer
 	cmd.Writer = &stdout
 	cmd.ErrWriter = &stdout
 
-	err := cmd.Run(context.Background(), []string{"taskman", "tasks", "done", "--help"})
+	err := cmd.Run(context.Background(), []string{"taskman", "tasks", "transition", "--help"})
 	if err != nil {
 		t.Fatalf("run help: %v", err)
 	}
 
 	help := stdout.String()
-	if !bytes.Contains([]byte(help), []byte("<project>/<task>")) {
-		t.Fatalf("help missing task id shape: %s", help)
+	for _, want := range []string{"<project>/<task>", "<transition>"} {
+		if !bytes.Contains([]byte(help), []byte(want)) {
+			t.Fatalf("help missing %q: %s", want, help)
+		}
 	}
 }

@@ -19,19 +19,19 @@ func TestProjectsCreateScaffoldsProject(t *testing.T) {
 defaults:
   project:
     labels: []
-    traits: {}
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars: {}
+workflow:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-steps: {}
+    statuses: [todo, active, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
 `)
 
 	cmd := BuildApp()
@@ -56,30 +56,34 @@ steps: {}
 	}
 }
 
-func TestProjectsCreatePersistsLabelsAndTraits(t *testing.T) {
+func TestProjectsCreatePersistsLabelsAndVars(t *testing.T) {
 	root := t.TempDir()
 	writeCLIConfig(t, root, `version: 1
 defaults:
   project:
     labels: [platform]
-    traits:
-      preview: none
+    vars:
+      area: identity
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
+    vars: {}
+vars:
   project:
-    preview: [app-api, none]
+    area:
+      allowed: [identity, product]
+workflow:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-steps: {}
+    statuses: [todo, active, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
 `)
 
 	cmd := BuildApp()
-	err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "create", "user-permissions", "--label", "auth", "--trait", "preview=app-api"})
+	err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "create", "user-permissions", "--label", "auth", "--var", "area=product"})
 	if err != nil {
 		t.Fatalf("run command: %v", err)
 	}
@@ -92,37 +96,41 @@ steps: {}
 	if len(project.Labels) != 2 || project.Labels[0] != "platform" || project.Labels[1] != "auth" {
 		t.Fatalf("labels = %#v", project.Labels)
 	}
-	if project.Traits["preview"] != "app-api" {
-		t.Fatalf("preview trait = %q", project.Traits["preview"])
+	if project.Vars["area"] != "product" {
+		t.Fatalf("area var = %q", project.Vars["area"])
 	}
 }
 
-func TestProjectsCreateRejectsInvalidTraitOverride(t *testing.T) {
+func TestProjectsCreateRejectsInvalidVarOverride(t *testing.T) {
 	root := t.TempDir()
 	writeCLIConfig(t, root, `version: 1
 defaults:
   project:
     labels: []
-    traits:
-      preview: none
+    vars:
+      area: identity
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
+    vars: {}
+vars:
   project:
-    preview: [app-api, none]
+    area:
+      allowed: [identity, product]
+workflow:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-steps: {}
+    statuses: [todo, active, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
 `)
 
 	cmd := BuildApp()
-	err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "create", "user-permissions", "--trait", "preview=maybe"})
+	err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "create", "user-permissions", "--var", "area=unknown"})
 	if err == nil {
-		t.Fatal("expected invalid trait error")
+		t.Fatal("expected invalid var error")
 	}
 }
 
@@ -132,20 +140,19 @@ func TestProjectsDescribeSupportsYAMLOutput(t *testing.T) {
 defaults:
   project:
     labels: []
-    traits:
-      preview: none
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars: {}
+workflow:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-steps: {}
+    statuses: [todo, active, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
 `)
 
 	cmd := BuildApp()
@@ -191,20 +198,19 @@ func TestProjectsGetShowsTaskCountSummaryInTextMode(t *testing.T) {
 defaults:
   project:
     labels: []
-    traits:
-      preview: none
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars: {}
+workflow:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-steps: {}
+    statuses: [todo, active, in_review, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
 `)
 	s := store.New(root)
 	if err := s.ScaffoldProject(projectStateForText()); err != nil {
@@ -232,7 +238,7 @@ steps: {}
 	}
 
 	out := string(data)
-	for _, want := range []string{"user-permissions", "active", "todo=1", "active=2", "done=3"} {
+	for _, want := range []string{"user-permissions", "active", "active=2", "closed=3", "todo=1"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("projects get output missing %q: %s", want, out)
 		}
@@ -245,20 +251,19 @@ func TestProjectsDescribeShowsRicherTextDetails(t *testing.T) {
 defaults:
   project:
     labels: []
-    traits:
-      preview: none
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars: {}
+workflow:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-steps: {}
+    statuses: [todo, active, in_review, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
 `)
 	s := store.New(root)
 	if err := s.ScaffoldProject(projectStateForText()); err != nil {
@@ -290,10 +295,10 @@ steps: {}
 		"Project: user-permissions",
 		"Status: active",
 		"Labels: auth, platform",
-		"Traits: preview=app-api",
-		"Tasks: todo=1 active=2 blocked=0 done=3 cancelled=0",
+		"Vars: area=product",
+		"Tasks: active=2, closed=3, todo=1",
 		"Archive Ready: false",
-		"Archive Blockers: task cloud-api-auth is still active",
+		"Archive Blockers: task api-auth is not terminal",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("projects describe output missing %q: %s", want, out)
@@ -307,17 +312,15 @@ func projectStateForText() model.ProjectState {
 		Slug:    "user-permissions",
 		Status:  model.ProjectStatusActive,
 		Labels:  []string{"auth", "platform"},
-		Traits:  map[string]string{"preview": "app-api"},
+		Vars:    map[string]string{"area": "product"},
 		Tasks: model.TaskCounts{
-			Todo:      1,
-			Active:    2,
-			Blocked:   0,
-			Done:      3,
-			Cancelled: 0,
+			"todo":   1,
+			"active": 2,
+			"closed": 3,
 		},
 		Archive: model.ArchiveState{
 			Ready:    false,
-			Blockers: []string{"task cloud-api-auth is still active"},
+			Blockers: []string{"task api-auth is not terminal"},
 		},
 	}
 }
