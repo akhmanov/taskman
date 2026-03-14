@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/assistant-wi/taskman/internal/model"
+	"github.com/akhmanov/taskman/internal/model"
 	"gopkg.in/yaml.v3"
 )
 

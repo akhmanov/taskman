@@ -11,7 +11,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/assistant-wi/taskman/internal/model"
+	"github.com/akhmanov/taskman/internal/model"
 )
 
 type Runner struct {

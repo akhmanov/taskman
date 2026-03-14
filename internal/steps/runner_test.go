@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/assistant-wi/taskman/internal/model"
+	"github.com/akhmanov/taskman/internal/model"
 )
 
 func TestRunnerExecutesStepWithJSONInputAndStructuredOutput(t *testing.T) {

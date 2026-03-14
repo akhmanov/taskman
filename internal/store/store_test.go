@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/assistant-wi/taskman/internal/model"
+	"github.com/akhmanov/taskman/internal/model"
 )
 
 func TestStoreLoadConfig(t *testing.T) {
