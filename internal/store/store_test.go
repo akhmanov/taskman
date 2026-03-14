@@ -3,6 +3,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/assistant-wi/taskman/internal/model"
@@ -73,12 +74,32 @@ func TestStoreScaffoldProjectCreatesExpectedFiles(t *testing.T) {
 	projectDir := filepath.Join(root, "projects", "active", "user-permissions")
 	for _, path := range []string{
 		filepath.Join(projectDir, "overview.md"),
+		filepath.Join(projectDir, "brief.md"),
+		filepath.Join(projectDir, "events.yaml"),
 		filepath.Join(projectDir, "state.yaml"),
 		filepath.Join(projectDir, "tasks"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s to exist: %v", path, err)
 		}
+	}
+
+	briefData, err := os.ReadFile(filepath.Join(projectDir, "brief.md"))
+	if err != nil {
+		t.Fatalf("read project brief: %v", err)
+	}
+	for _, section := range []string{"# Mission", "# Boundaries", "## In Scope", "# References"} {
+		if !strings.Contains(string(briefData), section) {
+			t.Fatalf("project brief template missing %q: %q", section, string(briefData))
+		}
+	}
+
+	eventsData, err := os.ReadFile(filepath.Join(projectDir, "events.yaml"))
+	if err != nil {
+		t.Fatalf("read project events: %v", err)
+	}
+	if string(eventsData) != "[]\n" {
+		t.Fatalf("project events template = %q", string(eventsData))
 	}
 
 	loaded, err := store.LoadProject("user-permissions")
@@ -115,6 +136,8 @@ func TestStoreScaffoldTaskCreatesTaskSessionAndArtifactsDirs(t *testing.T) {
 	taskDir := filepath.Join(root, "projects", "active", "user-permissions", "tasks", "cloud-api-auth")
 	for _, path := range []string{
 		filepath.Join(taskDir, "overview.md"),
+		filepath.Join(taskDir, "brief.md"),
+		filepath.Join(taskDir, "events.yaml"),
 		filepath.Join(taskDir, "state.yaml"),
 		filepath.Join(taskDir, "sessions"),
 		filepath.Join(taskDir, "artifacts"),
@@ -122,6 +145,24 @@ func TestStoreScaffoldTaskCreatesTaskSessionAndArtifactsDirs(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s to exist: %v", path, err)
 		}
+	}
+
+	briefData, err := os.ReadFile(filepath.Join(taskDir, "brief.md"))
+	if err != nil {
+		t.Fatalf("read task brief: %v", err)
+	}
+	for _, section := range []string{"# Intent", "# Scope In", "# Next Action", "# References"} {
+		if !strings.Contains(string(briefData), section) {
+			t.Fatalf("task brief template missing %q: %q", section, string(briefData))
+		}
+	}
+
+	eventsData, err := os.ReadFile(filepath.Join(taskDir, "events.yaml"))
+	if err != nil {
+		t.Fatalf("read task events: %v", err)
+	}
+	if string(eventsData) != "[]\n" {
+		t.Fatalf("task events template = %q", string(eventsData))
 	}
 
 	loaded, err := store.LoadTask("user-permissions", "cloud-api-auth")
@@ -173,5 +214,131 @@ func TestStoreArtifactsRemainOpaqueJSONMaps(t *testing.T) {
 	}
 	if artifact.Data["ok"] != true {
 		t.Fatalf("ok = %#v", artifact.Data["ok"])
+	}
+}
+
+func TestStoreProjectBriefLoadAndSaveRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+
+	if err := store.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
+		t.Fatalf("scaffold project: %v", err)
+	}
+
+	brief := "# Mission\n\nHarden auth.\n\n# Boundaries\n\n## In Scope\n\nIdentity.\n\n## Out of Scope\n\nBilling.\n\n# Glossary\n\n- Auth\n\n# Shared Decisions\n\n- Use bounded payloads.\n\n# Active Risks\n\n- Drift.\n\n# Tasking Rules\n\n- Keep tasks focused.\n\n# References\n\n- doc://auth\n"
+	if err := store.SaveProjectBrief("user-permissions", brief); err != nil {
+		t.Fatalf("save project brief: %v", err)
+	}
+
+	loaded, err := store.LoadProjectBrief("user-permissions")
+	if err != nil {
+		t.Fatalf("load project brief: %v", err)
+	}
+
+	if loaded != brief {
+		t.Fatalf("project brief = %q", loaded)
+	}
+}
+
+func TestStoreTaskBriefLoadAndSaveRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+
+	if err := store.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
+		t.Fatalf("scaffold project: %v", err)
+	}
+	if err := store.ScaffoldTask(model.TaskState{Version: 1, Slug: "api-auth", Project: "user-permissions", Status: model.TaskStatus("todo")}); err != nil {
+		t.Fatalf("scaffold task: %v", err)
+	}
+
+	brief := "# Intent\n\nAdd typed payload storage.\n\n# Scope In\n\nStorage primitives.\n\n# Scope Out\n\nCLI polish.\n\n# Acceptance\n\nBriefs and events persist.\n\n# Current Context\n\nFoundation only.\n\n# Open Questions\n\nNone.\n\n# Next Action\n\nImplement APIs.\n\n# References\n\n- plan://payload-layer\n"
+	if err := store.SaveTaskBrief("user-permissions", "api-auth", brief); err != nil {
+		t.Fatalf("save task brief: %v", err)
+	}
+
+	loaded, err := store.LoadTaskBrief("user-permissions", "api-auth")
+	if err != nil {
+		t.Fatalf("load task brief: %v", err)
+	}
+
+	if loaded != brief {
+		t.Fatalf("task brief = %q", loaded)
+	}
+}
+
+func TestStoreProjectEventsAppendAndListPreservesOrder(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+
+	if err := store.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
+		t.Fatalf("scaffold project: %v", err)
+	}
+
+	first := model.PayloadEvent{ID: "EVT-001", Type: model.PayloadEventTypeNote, At: "2026-03-14T10:00:00Z", Actor: "taskman", Summary: "Created project brief"}
+	second := model.PayloadEvent{ID: "EVT-002", Type: model.PayloadEventTypeTransition, At: "2026-03-14T10:30:00Z", Actor: "taskman", Summary: "Updated project status summary"}
+
+	if err := store.AppendProjectEvent("user-permissions", first); err != nil {
+		t.Fatalf("append first project event: %v", err)
+	}
+	if err := store.AppendProjectEvent("user-permissions", second); err != nil {
+		t.Fatalf("append second project event: %v", err)
+	}
+
+	events, err := store.ListProjectEvents("user-permissions")
+	if err != nil {
+		t.Fatalf("list project events: %v", err)
+	}
+
+	if len(events) != 2 {
+		t.Fatalf("project events len = %d, want 2", len(events))
+	}
+	if events[0].Summary != "Created project brief" {
+		t.Fatalf("first summary = %q", events[0].Summary)
+	}
+	if events[1].Type != model.PayloadEventTypeTransition {
+		t.Fatalf("second type = %q", events[1].Type)
+	}
+	if events[0].ID != "EVT-001" {
+		t.Fatalf("first id = %q", events[0].ID)
+	}
+}
+
+func TestStoreTaskEventsAppendAndListPreservesOrder(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+
+	if err := store.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
+		t.Fatalf("scaffold project: %v", err)
+	}
+	if err := store.ScaffoldTask(model.TaskState{Version: 1, Slug: "api-auth", Project: "user-permissions", Status: model.TaskStatus("todo")}); err != nil {
+		t.Fatalf("scaffold task: %v", err)
+	}
+
+	first := model.PayloadEvent{ID: "EVT-101", Type: model.PayloadEventTypeDecision, At: "2026-03-14T10:05:00Z", Actor: "taskman", Session: "S-001", Summary: "Created task brief", Rationale: "Need durable context", Impact: "Enables richer follow-up", Status: "active"}
+	second := model.PayloadEvent{ID: "EVT-102", Type: model.PayloadEventTypeBlocker, At: "2026-03-14T10:40:00Z", Actor: "taskman", Summary: "Updated task status summary", Status: "resolved"}
+
+	if err := store.AppendTaskEvent("user-permissions", "api-auth", first); err != nil {
+		t.Fatalf("append first task event: %v", err)
+	}
+	if err := store.AppendTaskEvent("user-permissions", "api-auth", second); err != nil {
+		t.Fatalf("append second task event: %v", err)
+	}
+
+	events, err := store.ListTaskEvents("user-permissions", "api-auth")
+	if err != nil {
+		t.Fatalf("list task events: %v", err)
+	}
+
+	if len(events) != 2 {
+		t.Fatalf("task events len = %d, want 2", len(events))
+	}
+	if events[0].Summary != "Created task brief" {
+		t.Fatalf("first summary = %q", events[0].Summary)
+	}
+	if events[1].Type != model.PayloadEventTypeBlocker {
+		t.Fatalf("second type = %q", events[1].Type)
+	}
+	if events[0].Status != "active" {
+		t.Fatalf("first status = %q", events[0].Status)
 	}
 }
