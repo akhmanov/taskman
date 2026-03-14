@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -270,6 +271,23 @@ steps: {}
 	}); err != nil {
 		t.Fatalf("save mr artifact: %v", err)
 	}
+	if err := s.SaveArtifact("user-permissions", "cloud-api-auth", "repository", map[string]string{
+		"root": "/repo/cloud",
+		"name": "cloud",
+	}); err != nil {
+		t.Fatalf("save repository artifact: %v", err)
+	}
+	if err := s.SaveArtifact("user-permissions", "cloud-api-auth", "branch", map[string]string{
+		"name": "task/user-permissions/cloud-api-auth",
+	}); err != nil {
+		t.Fatalf("save branch artifact: %v", err)
+	}
+	if err := s.SaveArtifact("user-permissions", "cloud-api-auth", "worktree", map[string]string{
+		"path":   "/repo/cloud/.worktrees/user-permissions/cloud-api-auth",
+		"status": "cleaned",
+	}); err != nil {
+		t.Fatalf("save worktree artifact: %v", err)
+	}
 
 	readCmd := BuildApp()
 	r, w, err := os.Pipe()
@@ -296,12 +314,75 @@ steps: {}
 		"user-permissions/cloud-api-auth",
 		"MR Status: ready",
 		"MR URL: https://gitlab.com/assistant-wi/cloud/-/merge_requests/123",
+		"Repository Root: /repo/cloud",
+		"Branch: task/user-permissions/cloud-api-auth",
+		"Worktree Path: /repo/cloud/.worktrees/user-permissions/cloud-api-auth",
 		"Target Branch: main",
 		"Title: Add auth flow",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("describe output missing %q: %s", want, out)
 		}
+	}
+}
+
+func TestTasksGetSupportsJSONOutput(t *testing.T) {
+	root := t.TempDir()
+	writeCLIConfig(t, root, `version: 1
+defaults:
+  project:
+    labels: []
+    traits: {}
+  task:
+    labels: []
+    traits:
+      mr: required
+      worktree: required
+traits:
+  project:
+    preview: [app-api, none]
+  task:
+    mr: [required, not-needed]
+    worktree: [required, optional]
+steps: {}
+`)
+	s := store.New(root)
+	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "alpha", Status: model.ProjectStatusActive}); err != nil {
+		t.Fatalf("scaffold project: %v", err)
+	}
+	if err := s.ScaffoldTask(model.TaskState{Version: 1, Slug: "cloud-api-auth", Project: "alpha", Repo: "cloud", Status: model.TaskStatusActive}); err != nil {
+		t.Fatalf("scaffold task: %v", err)
+	}
+
+	readCmd := BuildApp()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdout: %v", err)
+	}
+	originalStdout := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = originalStdout }()
+
+	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "tasks", "get", "--output", "json"}); err != nil {
+		t.Fatalf("tasks get json: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+
+	var payload []map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("unmarshal json output: %v\n%s", err, string(data))
+	}
+	if len(payload) != 1 {
+		t.Fatalf("payload len = %d", len(payload))
+	}
+	if payload[0]["slug"] != "cloud-api-auth" {
+		t.Fatalf("slug = %#v", payload[0]["slug"])
 	}
 }
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/assistant-wi/taskman/internal/steps"
 	"github.com/assistant-wi/taskman/internal/store"
 	urfavecli "github.com/urfave/cli/v3"
+	"gopkg.in/yaml.v3"
 )
 
 func BuildApp() *urfavecli.Command {
@@ -19,8 +21,8 @@ func BuildApp() *urfavecli.Command {
 		Name:  "projects",
 		Usage: "Manage project resources",
 		Commands: []*urfavecli.Command{
-			{Name: "get", Usage: "List projects", Action: projectsGetAction},
-			{Name: "describe", Usage: "Describe a project", ArgsUsage: "<project>", Action: projectsDescribeAction},
+			{Name: "get", Usage: "List projects", Flags: []urfavecli.Flag{outputFlag()}, Action: projectsGetAction},
+			{Name: "describe", Usage: "Describe a project", ArgsUsage: "<project>", Flags: []urfavecli.Flag{outputFlag()}, Action: projectsDescribeAction},
 			{Name: "create", Usage: "Create a project", ArgsUsage: "<project>", Flags: []urfavecli.Flag{&urfavecli.StringSliceFlag{Name: "label"}, &urfavecli.StringSliceFlag{Name: "trait"}}, Action: projectsCreateAction},
 			{Name: "archive", Usage: "Archive a project", ArgsUsage: "<project>", Action: projectsArchiveAction},
 		},
@@ -30,8 +32,8 @@ func BuildApp() *urfavecli.Command {
 		Name:  "tasks",
 		Usage: "Manage task resources",
 		Commands: []*urfavecli.Command{
-			{Name: "get", Usage: "List tasks", Flags: []urfavecli.Flag{&urfavecli.StringFlag{Name: "project"}, &urfavecli.StringFlag{Name: "status"}}, Action: tasksGetAction},
-			{Name: "describe", Usage: "Describe a task", ArgsUsage: "<project>/<task>", Action: tasksDescribeAction},
+			{Name: "get", Usage: "List tasks", Flags: []urfavecli.Flag{&urfavecli.StringFlag{Name: "project"}, &urfavecli.StringFlag{Name: "status"}, outputFlag()}, Action: tasksGetAction},
+			{Name: "describe", Usage: "Describe a task", ArgsUsage: "<project>/<task>", Flags: []urfavecli.Flag{outputFlag()}, Action: tasksDescribeAction},
 			{Name: "create", Usage: "Create a task", Flags: []urfavecli.Flag{&urfavecli.StringFlag{Name: "project", Required: true}, &urfavecli.StringFlag{Name: "repo", Required: true}, &urfavecli.StringFlag{Name: "name", Required: true}, &urfavecli.StringSliceFlag{Name: "label"}, &urfavecli.StringSliceFlag{Name: "trait"}}, Action: tasksCreateAction},
 			{Name: "block", Usage: "Block a task", ArgsUsage: "<project>/<task>", Action: tasksBlockAction},
 			{Name: "unblock", Usage: "Unblock a task", ArgsUsage: "<project>/<task>", Action: tasksUnblockAction},
@@ -75,13 +77,14 @@ func projectsGetAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	writer := commandWriter(cmd)
-	for _, project := range projects {
-		if _, err := fmt.Fprintf(writer, "%s\t%s\n", project.Slug, project.Status); err != nil {
-			return err
+	return writeOutput(cmd, projects, func(writer io.Writer) error {
+		for _, project := range projects {
+			if _, err := fmt.Fprintf(writer, "%s\t%s\ttodo=%d active=%d blocked=%d done=%d cancelled=%d\n", project.Slug, project.Status, project.Tasks.Todo, project.Tasks.Active, project.Tasks.Blocked, project.Tasks.Done, project.Tasks.Cancelled); err != nil {
+				return err
+			}
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func projectsDescribeAction(_ context.Context, cmd *urfavecli.Command) error {
@@ -89,8 +92,40 @@ func projectsDescribeAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(commandWriter(cmd), "%s\t%s\n", project.Slug, project.Status)
-	return err
+	return writeOutput(cmd, project, func(writer io.Writer) error {
+		if _, err := fmt.Fprintf(writer, "Project: %s\n", project.Slug); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(writer, "Status: %s\n", project.Status); err != nil {
+			return err
+		}
+		if len(project.Labels) > 0 {
+			if _, err := fmt.Fprintf(writer, "Labels: %s\n", strings.Join(project.Labels, ", ")); err != nil {
+				return err
+			}
+		}
+		if len(project.Traits) > 0 {
+			parts := make([]string, 0, len(project.Traits))
+			for key, value := range project.Traits {
+				parts = append(parts, fmt.Sprintf("%s=%s", key, value))
+			}
+			if _, err := fmt.Fprintf(writer, "Traits: %s\n", strings.Join(parts, ", ")); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintf(writer, "Tasks: todo=%d active=%d blocked=%d done=%d cancelled=%d\n", project.Tasks.Todo, project.Tasks.Active, project.Tasks.Blocked, project.Tasks.Done, project.Tasks.Cancelled); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(writer, "Archive Ready: %t\n", project.Archive.Ready); err != nil {
+			return err
+		}
+		if len(project.Archive.Blockers) > 0 {
+			if _, err := fmt.Fprintf(writer, "Archive Blockers: %s\n", strings.Join(project.Archive.Blockers, "; ")); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func projectsCreateAction(_ context.Context, cmd *urfavecli.Command) error {
@@ -113,16 +148,21 @@ func tasksGetAction(_ context.Context, cmd *urfavecli.Command) error {
 		return err
 	}
 	status := cmd.String("status")
-	writer := commandWriter(cmd)
+	filtered := make([]model.TaskState, 0, len(tasks))
 	for _, task := range tasks {
 		if status != "" && string(task.Status) != status {
 			continue
 		}
-		if _, err := fmt.Fprintf(writer, "%s/%s\t%s\n", task.Project, task.Slug, task.Status); err != nil {
-			return err
-		}
+		filtered = append(filtered, task)
 	}
-	return nil
+	return writeOutput(cmd, filtered, func(writer io.Writer) error {
+		for _, task := range filtered {
+			if _, err := fmt.Fprintf(writer, "%s/%s\t%s\n", task.Project, task.Slug, task.Status); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func tasksDescribeAction(_ context.Context, cmd *urfavecli.Command) error {
@@ -134,36 +174,69 @@ func tasksDescribeAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	writer := commandWriter(cmd)
-	if _, err := fmt.Fprintf(writer, "%s/%s\t%s\n", loaded.Project, loaded.Slug, loaded.Status); err != nil {
-		return err
-	}
-
-	mrArtifact, err := runtimeStore(cmd).LoadArtifact(project, task, "mr")
-	if err == nil {
-		if value := mrArtifact.Data["status"]; value != "" {
-			if _, err := fmt.Fprintf(writer, "MR Status: %s\n", value); err != nil {
-				return err
+	artifacts := loadArtifacts(runtimeStore(cmd), project, task)
+	return writeOutput(cmd, map[string]any{
+		"task":      loaded,
+		"artifacts": artifacts,
+	}, func(writer io.Writer) error {
+		if _, err := fmt.Fprintf(writer, "%s/%s\t%s\n", loaded.Project, loaded.Slug, loaded.Status); err != nil {
+			return err
+		}
+		if repository := artifacts["repository"]; repository != nil {
+			if value := repository["name"]; value != "" {
+				if _, err := fmt.Fprintf(writer, "Repository: %s\n", value); err != nil {
+					return err
+				}
+			}
+			if value := repository["root"]; value != "" {
+				if _, err := fmt.Fprintf(writer, "Repository Root: %s\n", value); err != nil {
+					return err
+				}
 			}
 		}
-		if value := mrArtifact.Data["url"]; value != "" {
-			if _, err := fmt.Fprintf(writer, "MR URL: %s\n", value); err != nil {
-				return err
+		if branch := artifacts["branch"]; branch != nil {
+			if value := branch["name"]; value != "" {
+				if _, err := fmt.Fprintf(writer, "Branch: %s\n", value); err != nil {
+					return err
+				}
 			}
 		}
-		if value := mrArtifact.Data["target_branch"]; value != "" {
-			if _, err := fmt.Fprintf(writer, "Target Branch: %s\n", value); err != nil {
-				return err
+		if worktree := artifacts["worktree"]; worktree != nil {
+			if value := worktree["status"]; value != "" {
+				if _, err := fmt.Fprintf(writer, "Worktree Status: %s\n", value); err != nil {
+					return err
+				}
+			}
+			if value := worktree["path"]; value != "" {
+				if _, err := fmt.Fprintf(writer, "Worktree Path: %s\n", value); err != nil {
+					return err
+				}
 			}
 		}
-		if value := mrArtifact.Data["title"]; value != "" {
-			if _, err := fmt.Fprintf(writer, "Title: %s\n", value); err != nil {
-				return err
+		if mrArtifact := artifacts["mr"]; mrArtifact != nil {
+			if value := mrArtifact["status"]; value != "" {
+				if _, err := fmt.Fprintf(writer, "MR Status: %s\n", value); err != nil {
+					return err
+				}
+			}
+			if value := mrArtifact["url"]; value != "" {
+				if _, err := fmt.Fprintf(writer, "MR URL: %s\n", value); err != nil {
+					return err
+				}
+			}
+			if value := mrArtifact["target_branch"]; value != "" {
+				if _, err := fmt.Fprintf(writer, "Target Branch: %s\n", value); err != nil {
+					return err
+				}
+			}
+			if value := mrArtifact["title"]; value != "" {
+				if _, err := fmt.Fprintf(writer, "Title: %s\n", value); err != nil {
+					return err
+				}
 			}
 		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 func tasksCreateAction(_ context.Context, cmd *urfavecli.Command) error {
@@ -275,4 +348,40 @@ func commandWriter(cmd *urfavecli.Command) io.Writer {
 		return root.Writer
 	}
 	return os.Stdout
+}
+
+func outputFlag() *urfavecli.StringFlag {
+	return &urfavecli.StringFlag{Name: "output", Value: "text", Usage: "Output format: text, json, yaml"}
+}
+
+func writeOutput(cmd *urfavecli.Command, value any, renderText func(io.Writer) error) error {
+	writer := commandWriter(cmd)
+	switch cmd.String("output") {
+	case "", "text":
+		return renderText(writer)
+	case "json":
+		enc := json.NewEncoder(writer)
+		enc.SetIndent("", "  ")
+		return enc.Encode(value)
+	case "yaml":
+		data, err := yaml.Marshal(value)
+		if err != nil {
+			return err
+		}
+		_, err = writer.Write(data)
+		return err
+	default:
+		return fmt.Errorf("output must be one of: text, json, yaml")
+	}
+}
+
+func loadArtifacts(s store.Store, project, task string) map[string]map[string]string {
+	artifacts := map[string]map[string]string{}
+	for _, kind := range []string{"repository", "branch", "worktree", "mr"} {
+		artifact, err := s.LoadArtifact(project, task, kind)
+		if err == nil && len(artifact.Data) > 0 {
+			artifacts[kind] = artifact.Data
+		}
+	}
+	return artifacts
 }
