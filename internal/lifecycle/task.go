@@ -24,6 +24,81 @@ func NewTaskService(s store.Store, runner steps.Runner) TaskService {
 	return TaskService{store: s, runner: runner, now: time.Now}
 }
 
+func (s TaskService) Update(projectSlug, taskSlug string, labels []string, vars map[string]string, unsetVars []string) (model.TaskState, error) {
+	cfg, err := s.store.LoadConfig()
+	if err != nil {
+		return model.TaskState{}, err
+	}
+	if err := cfg.ValidateVarOverrides("task", vars); err != nil {
+		return model.TaskState{}, err
+	}
+
+	task, err := s.store.LoadTask(projectSlug, taskSlug)
+	if err != nil {
+		return model.TaskState{}, err
+	}
+
+	if labels != nil {
+		task.Labels = append([]string{}, labels...)
+	}
+	if len(unsetVars) > 0 {
+		if task.Vars == nil {
+			task.Vars = map[string]string{}
+		}
+		for _, key := range unsetVars {
+			delete(task.Vars, key)
+		}
+	}
+	if vars != nil {
+		task.Vars = model.MergeVars(task.Vars, vars)
+	}
+	if err := cfg.ValidateRequiredVars("task", task.Vars); err != nil {
+		return model.TaskState{}, err
+	}
+
+	task.UpdatedAt = s.now().UTC().Format(time.RFC3339)
+	task.LastOp = model.OperationState{Cmd: "tasks.update", OK: true, At: task.UpdatedAt}
+	if err := s.store.SaveTask(task); err != nil {
+		return model.TaskState{}, err
+	}
+
+	return task, nil
+}
+
+func (s TaskService) GetBrief(projectSlug, taskSlug string) (string, error) {
+	if _, err := s.store.LoadTask(projectSlug, taskSlug); err != nil {
+		return "", err
+	}
+	return s.store.LoadTaskBrief(projectSlug, taskSlug)
+}
+
+func (s TaskService) SetBrief(projectSlug, taskSlug, brief string) error {
+	if _, err := s.store.LoadTask(projectSlug, taskSlug); err != nil {
+		return err
+	}
+	if err := validateTaskBrief(brief); err != nil {
+		return err
+	}
+	return s.store.SaveTaskBrief(projectSlug, taskSlug, brief)
+}
+
+func (s TaskService) AddEvent(projectSlug, taskSlug string, event model.PayloadEvent) error {
+	if _, err := s.store.LoadTask(projectSlug, taskSlug); err != nil {
+		return err
+	}
+	if err := validatePayloadEvent(event); err != nil {
+		return err
+	}
+	return s.store.AppendTaskEvent(projectSlug, taskSlug, event)
+}
+
+func (s TaskService) GetEvents(projectSlug, taskSlug string) ([]model.PayloadEvent, error) {
+	if _, err := s.store.LoadTask(projectSlug, taskSlug); err != nil {
+		return nil, err
+	}
+	return s.store.ListTaskEvents(projectSlug, taskSlug)
+}
+
 func (s TaskService) Create(projectSlug, name string, labels []string, vars map[string]string) (model.TaskState, error) {
 	cfg, err := s.store.LoadConfig()
 	if err != nil {

@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -336,6 +337,278 @@ workflow:
 	taskDir := filepath.Join(root, "projects", "active", "user-permissions", "tasks", "api-auth")
 	if _, statErr := os.Stat(taskDir); !os.IsNotExist(statErr) {
 		t.Fatalf("task dir should not exist, stat err = %v", statErr)
+	}
+}
+
+func TestTaskServiceUpdateBriefAndEventsPersistBoundedPayloadMemory(t *testing.T) {
+	root := t.TempDir()
+	writeConfig(t, root, `version: 1
+defaults:
+  project:
+    labels: []
+    vars: {}
+  task:
+    labels: [backend]
+    vars:
+      kind: feature
+vars:
+  task:
+    kind:
+      allowed: [feature, chore]
+workflow:
+  task:
+    statuses: [todo, active, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
+`)
+
+	s := store.New(root)
+	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
+		t.Fatalf("scaffold project: %v", err)
+	}
+	if err := s.ScaffoldTask(model.TaskState{
+		Version: 1,
+		Slug:    "api-auth",
+		Project: "user-permissions",
+		Status:  model.TaskStatus("todo"),
+		Labels:  []string{"backend"},
+		Vars:    map[string]string{"kind": "feature"},
+	}); err != nil {
+		t.Fatalf("scaffold task: %v", err)
+	}
+
+	svc := NewTaskService(s, steps.New(root))
+
+	updated, err := svc.Update("user-permissions", "api-auth", []string{"auth"}, map[string]string{"kind": "chore"}, nil)
+	if err != nil {
+		t.Fatalf("update task: %v", err)
+	}
+	if !reflect.DeepEqual(updated.Labels, []string{"auth"}) {
+		t.Fatalf("labels = %#v", updated.Labels)
+	}
+	if updated.Vars["kind"] != "chore" {
+		t.Fatalf("kind var = %q", updated.Vars["kind"])
+	}
+
+	loadedTask, err := s.LoadTask("user-permissions", "api-auth")
+	if err != nil {
+		t.Fatalf("load task after update: %v", err)
+	}
+	if !reflect.DeepEqual(loadedTask.Labels, []string{"auth"}) {
+		t.Fatalf("persisted labels = %#v", loadedTask.Labels)
+	}
+
+	wantBrief := "# Intent\n\nDocument runtime decisions.\n\n# Scope In\n\nPayload APIs.\n\n# Scope Out\n\nWorkflow redesign.\n\n# Acceptance\n\nBrief and events persist.\n\n# Current Context\n\nMutation layer implemented.\n\n# Open Questions\n\nNone.\n\n# Next Action\n\nImplement describe views.\n\n# References\n\n- plan://payload-layer\n"
+	if err := svc.SetBrief("user-permissions", "api-auth", wantBrief); err != nil {
+		t.Fatalf("set task brief: %v", err)
+	}
+	gotBrief, err := svc.GetBrief("user-permissions", "api-auth")
+	if err != nil {
+		t.Fatalf("get task brief: %v", err)
+	}
+	if gotBrief != wantBrief {
+		t.Fatalf("brief = %q", gotBrief)
+	}
+
+	event := model.PayloadEvent{
+		ID:        "EVT-002",
+		At:        "2026-03-14T12:10:00Z",
+		Type:      model.PayloadEventTypeTransition,
+		Summary:   "Moved to active",
+		Actor:     "taskman",
+		Rationale: "Unblocked by API contract",
+		Impact:    "Ready for integration tests",
+	}
+	if err := svc.AddEvent("user-permissions", "api-auth", event); err != nil {
+		t.Fatalf("add task event: %v", err)
+	}
+	events, err := svc.GetEvents("user-permissions", "api-auth")
+	if err != nil {
+		t.Fatalf("get task events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events len = %d", len(events))
+	}
+	if events[0].Type != model.PayloadEventTypeTransition {
+		t.Fatalf("event type = %q", events[0].Type)
+	}
+	if events[0].Impact != "Ready for integration tests" {
+		t.Fatalf("event impact = %q", events[0].Impact)
+	}
+}
+
+func TestTaskServiceUpdateSupportsUnsetVarAndRevalidatesRequiredVars(t *testing.T) {
+	root := t.TempDir()
+	writeConfig(t, root, `version: 1
+defaults:
+  project:
+    labels: []
+    vars: {}
+  task:
+    labels: []
+    vars:
+      kind: feature
+      owner: platform
+vars:
+  task:
+    kind:
+      required: true
+      allowed: [feature, chore]
+    owner:
+      allowed: [platform, core]
+workflow:
+  task:
+    statuses: [todo, active, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
+`)
+
+	s := store.New(root)
+	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
+		t.Fatalf("scaffold project: %v", err)
+	}
+	if err := s.ScaffoldTask(model.TaskState{
+		Version: 1,
+		Slug:    "api-auth",
+		Project: "user-permissions",
+		Status:  model.TaskStatus("todo"),
+		Vars:    map[string]string{"kind": "feature", "owner": "platform"},
+	}); err != nil {
+		t.Fatalf("scaffold task: %v", err)
+	}
+
+	svc := NewTaskService(s, steps.New(root))
+
+	updated, err := svc.Update("user-permissions", "api-auth", nil, nil, []string{"owner"})
+	if err != nil {
+		t.Fatalf("update task with unset: %v", err)
+	}
+	if _, ok := updated.Vars["owner"]; ok {
+		t.Fatalf("owner should be unset: %#v", updated.Vars)
+	}
+
+	_, err = svc.Update("user-permissions", "api-auth", nil, nil, []string{"kind"})
+	if err == nil {
+		t.Fatal("expected required var validation error after unset")
+	}
+}
+
+func TestTaskServiceAddEventRejectsUnknownType(t *testing.T) {
+	root := t.TempDir()
+	writeConfig(t, root, `version: 1
+defaults:
+  project:
+    labels: []
+    vars: {}
+  task:
+    labels: []
+    vars: {}
+workflow:
+  task:
+    statuses: [todo, active, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
+`)
+
+	s := store.New(root)
+	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
+		t.Fatalf("scaffold project: %v", err)
+	}
+	if err := s.ScaffoldTask(model.TaskState{Version: 1, Slug: "api-auth", Project: "user-permissions", Status: model.TaskStatus("todo")}); err != nil {
+		t.Fatalf("scaffold task: %v", err)
+	}
+
+	svc := NewTaskService(s, steps.New(root))
+	err := svc.AddEvent("user-permissions", "api-auth", model.PayloadEvent{
+		ID:      "EVT-002",
+		At:      "2026-03-14T12:10:00Z",
+		Type:    model.PayloadEventType("future_type"),
+		Summary: "unknown",
+		Actor:   "taskman",
+	})
+	if err == nil {
+		t.Fatal("expected unknown type error")
+	}
+}
+
+func TestTaskServiceSetBriefRejectsNonTemplateContent(t *testing.T) {
+	root := t.TempDir()
+	writeConfig(t, root, `version: 1
+defaults:
+  project:
+    labels: []
+    vars: {}
+  task:
+    labels: []
+    vars: {}
+workflow:
+  task:
+    statuses: [todo, active, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
+`)
+	s := store.New(root)
+	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
+		t.Fatalf("scaffold project: %v", err)
+	}
+	if err := s.ScaffoldTask(model.TaskState{Version: 1, Slug: "api-auth", Project: "user-permissions", Status: model.TaskStatus("todo")}); err != nil {
+		t.Fatalf("scaffold task: %v", err)
+	}
+
+	svc := NewTaskService(s, steps.New(root))
+	if err := svc.SetBrief("user-permissions", "api-auth", "freeform text"); err == nil {
+		t.Fatal("expected invalid task brief error")
+	}
+}
+
+func TestTaskServiceAddBlockerEventRejectsInvalidStatus(t *testing.T) {
+	root := t.TempDir()
+	writeConfig(t, root, `version: 1
+defaults:
+  project:
+    labels: []
+    vars: {}
+  task:
+    labels: []
+    vars: {}
+workflow:
+  task:
+    statuses: [todo, active, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
+`)
+	s := store.New(root)
+	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
+		t.Fatalf("scaffold project: %v", err)
+	}
+	if err := s.ScaffoldTask(model.TaskState{Version: 1, Slug: "api-auth", Project: "user-permissions", Status: model.TaskStatus("todo")}); err != nil {
+		t.Fatalf("scaffold task: %v", err)
+	}
+
+	svc := NewTaskService(s, steps.New(root))
+	err := svc.AddEvent("user-permissions", "api-auth", model.PayloadEvent{ID: "EVT-010", At: "2026-03-14T12:00:00Z", Type: model.PayloadEventTypeBlocker, Summary: "Need signoff", Actor: "taskman", Status: "open"})
+	if err == nil {
+		t.Fatal("expected invalid blocker event error")
 	}
 }
 

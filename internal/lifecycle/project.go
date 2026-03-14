@@ -21,6 +21,81 @@ func NewProjectService(s store.Store, runner steps.Runner) ProjectService {
 	return ProjectService{store: s, runner: runner, now: time.Now}
 }
 
+func (s ProjectService) Update(slug string, labels []string, vars map[string]string, unsetVars []string) (model.ProjectState, error) {
+	cfg, err := s.store.LoadConfig()
+	if err != nil {
+		return model.ProjectState{}, err
+	}
+	if err := cfg.ValidateVarOverrides("project", vars); err != nil {
+		return model.ProjectState{}, err
+	}
+
+	project, err := s.store.LoadProject(slug)
+	if err != nil {
+		return model.ProjectState{}, err
+	}
+
+	if labels != nil {
+		project.Labels = append([]string{}, labels...)
+	}
+	if len(unsetVars) > 0 {
+		if project.Vars == nil {
+			project.Vars = map[string]string{}
+		}
+		for _, key := range unsetVars {
+			delete(project.Vars, key)
+		}
+	}
+	if vars != nil {
+		project.Vars = model.MergeVars(project.Vars, vars)
+	}
+	if err := cfg.ValidateRequiredVars("project", project.Vars); err != nil {
+		return model.ProjectState{}, err
+	}
+
+	project.UpdatedAt = s.now().UTC().Format(time.RFC3339)
+	project.LastOp = model.OperationState{Cmd: "projects.update", OK: true, At: project.UpdatedAt}
+	if err := s.store.SaveProject(project); err != nil {
+		return model.ProjectState{}, err
+	}
+
+	return project, nil
+}
+
+func (s ProjectService) GetBrief(slug string) (string, error) {
+	if _, err := s.store.LoadProject(slug); err != nil {
+		return "", err
+	}
+	return s.store.LoadProjectBrief(slug)
+}
+
+func (s ProjectService) SetBrief(slug, brief string) error {
+	if _, err := s.store.LoadProject(slug); err != nil {
+		return err
+	}
+	if err := validateProjectBrief(brief); err != nil {
+		return err
+	}
+	return s.store.SaveProjectBrief(slug, brief)
+}
+
+func (s ProjectService) AddEvent(slug string, event model.PayloadEvent) error {
+	if _, err := s.store.LoadProject(slug); err != nil {
+		return err
+	}
+	if err := validatePayloadEvent(event); err != nil {
+		return err
+	}
+	return s.store.AppendProjectEvent(slug, event)
+}
+
+func (s ProjectService) GetEvents(slug string) ([]model.PayloadEvent, error) {
+	if _, err := s.store.LoadProject(slug); err != nil {
+		return nil, err
+	}
+	return s.store.ListProjectEvents(slug)
+}
+
 func (s ProjectService) Create(slug string, labels []string, vars map[string]string) (model.ProjectState, error) {
 	cfg, err := s.store.LoadConfig()
 	if err != nil {
