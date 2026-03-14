@@ -1,6 +1,6 @@
 package model
 
 type ArtifactState struct {
-	Version int               `yaml:"version"`
-	Data    map[string]string `yaml:"data,omitempty"`
+	Version int               `json:"version" yaml:"version"`
+	Data    map[string]string `json:"data,omitempty" yaml:"data,omitempty"`
 }
