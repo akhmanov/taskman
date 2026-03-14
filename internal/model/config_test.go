@@ -11,31 +11,42 @@ func TestConfigUnmarshalKeepsConciseWorkflowShape(t *testing.T) {
 defaults:
   project:
     labels: [platform]
-    traits:
-      preview: app-api
+    vars:
+      area: identity
   task:
     labels: [backend]
-    traits:
-      mr: required
-      worktree: required
-traits:
+    vars:
+      kind: feature
+vars:
   project:
-    preview: [app-api, none]
+    area:
+      allowed: [identity, platform]
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
+    kind:
+      allowed: [feature, chore]
 naming:
-  task_slug: "{{ .repo }}-{{ .name }}"
-  branch: "task/{{ .project.slug }}/{{ .task.slug }}"
-steps:
-  task_start:
-    - name: create_worktree
-      when:
-        task.traits.worktree: required
-      cmd:
-        - ./tasks/_meta/bin/create-worktree
-        - --input
-        - "{{ .input_json_path }}"
+  task_slug: "{{ .project.slug }}-{{ .name }}"
+workflow:
+  task:
+    statuses: [todo, active, blocked, done, cancelled, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
+        requires: [kind]
+        steps:
+          - name: initialize
+            when:
+              task.vars.kind: feature
+            cmd:
+              - ./tasks/_meta/bin/noop
+              - --input
+              - "{{ .input_json_path }}"
+      close:
+        from: [done, cancelled]
+        to: closed
 `)
 
 	var cfg Config
@@ -47,26 +58,38 @@ steps:
 		t.Fatalf("version = %d, want 1", cfg.Version)
 	}
 
-	if got := cfg.Defaults.Task.Traits["mr"]; got != "required" {
-		t.Fatalf("default task mr trait = %q, want required", got)
+	if got := cfg.Defaults.Task.Vars["kind"]; got != "feature" {
+		t.Fatalf("default task kind var = %q, want feature", got)
 	}
 
-	if got := cfg.Naming.TaskSlug; got != "{{ .repo }}-{{ .name }}" {
+	if got := cfg.Naming.TaskSlug; got != "{{ .project.slug }}-{{ .name }}" {
 		t.Fatalf("task slug template = %q", got)
 	}
 
-	steps := cfg.Steps[TaskStartPhase]
+	if len(cfg.Workflow.Task.Statuses) != 6 {
+		t.Fatalf("task workflow statuses = %d, want 6", len(cfg.Workflow.Task.Statuses))
+	}
+
+	if cfg.Workflow.Task.InitialStatus != "todo" {
+		t.Fatalf("initial status = %q, want todo", cfg.Workflow.Task.InitialStatus)
+	}
+
+	if len(cfg.Workflow.Task.Transitions) != 2 {
+		t.Fatalf("task workflow transitions = %d, want 2", len(cfg.Workflow.Task.Transitions))
+	}
+
+	steps := cfg.Workflow.Task.Transitions["start"].Steps
 	if len(steps) != 1 {
-		t.Fatalf("task_start steps = %d, want 1", len(steps))
+		t.Fatalf("start steps = %d, want 1", len(steps))
 	}
 
 	step := steps[0]
-	if step.Name != "create_worktree" {
+	if step.Name != "initialize" {
 		t.Fatalf("step name = %q", step.Name)
 	}
 
-	if got := step.When["task.traits.worktree"]; got != "required" {
-		t.Fatalf("when selector = %q, want required", got)
+	if got := step.When["task.vars.kind"]; got != "feature" {
+		t.Fatalf("when selector = %q, want feature", got)
 	}
 
 	if len(step.Cmd) != 3 {
@@ -74,46 +97,79 @@ steps:
 	}
 }
 
-func TestConfigValidateRejectsUnknownDefaultTraitValues(t *testing.T) {
+func TestConfigValidateRejectsTransitionToUndeclaredStatus(t *testing.T) {
 	cfg := Config{
 		Version: 1,
-		Traits: TraitSchema{
-			Task: map[string][]string{
-				"mr": {"required", "not-needed"},
-			},
-		},
+		Vars:    VarSchema{Task: map[string]VarRule{"kind": {Allowed: []string{"feature", "chore"}}}},
 		Defaults: Defaults{
-			Task: MetadataDefaults{Traits: map[string]string{"mr": "sometimes"}},
+			Task: MetadataDefaults{Vars: map[string]string{"kind": "feature"}},
 		},
+		Workflow: WorkflowConfig{Task: TaskWorkflowConfig{
+			Statuses:      []TaskStatus{"todo", "active"},
+			InitialStatus: "todo",
+			Transitions: map[string]TaskTransition{
+				"block": {From: []TaskStatus{"todo"}, To: "blocked"},
+			},
+		}},
 	}
 
 	err := cfg.Validate()
 	if err == nil {
-		t.Fatal("expected validation error")
+		t.Fatal("expected validation error for transition status")
 	}
 }
 
 func TestConfigValidateRejectsSemanticallyUnknownTemplateFields(t *testing.T) {
 	cfg := Config{
 		Version: 1,
-		Traits: TraitSchema{
-			Project: map[string][]string{"preview": {"app-api", "none"}},
-			Task: map[string][]string{
-				"mr": {"required", "not-needed"},
-			},
+		Vars: VarSchema{
+			Project: map[string]VarRule{"area": {Allowed: []string{"identity", "platform"}}},
+			Task:    map[string]VarRule{"kind": {Allowed: []string{"feature", "chore"}}},
 		},
 		Defaults: Defaults{
-			Project: MetadataDefaults{Traits: map[string]string{"preview": "none"}},
-			Task:    MetadataDefaults{Traits: map[string]string{"mr": "required"}},
+			Project: MetadataDefaults{Vars: map[string]string{"area": "identity"}},
+			Task:    MetadataDefaults{Vars: map[string]string{"kind": "feature"}},
 		},
 		Naming: Naming{
-			TaskSlug: "{{ .repo }}-{{ .name }}",
-			Branch:   "task/{{ .project.missing }}/{{ .task.slug }}",
+			TaskSlug: "{{ .project.missing }}-{{ .name }}",
 		},
+		Workflow: WorkflowConfig{Task: TaskWorkflowConfig{
+			Statuses:      []TaskStatus{"todo", "active"},
+			InitialStatus: "todo",
+			Transitions: map[string]TaskTransition{
+				"start": {From: []TaskStatus{"todo"}, To: "active"},
+			},
+		}},
 	}
 
 	err := cfg.Validate()
 	if err == nil {
 		t.Fatal("expected semantic template validation error")
+	}
+}
+
+func TestConfigValidateRejectsUnknownWhenSelector(t *testing.T) {
+	cfg := Config{
+		Version: 1,
+		Workflow: WorkflowConfig{Task: TaskWorkflowConfig{
+			Statuses:      []TaskStatus{"todo", "active"},
+			InitialStatus: "todo",
+			Transitions: map[string]TaskTransition{
+				"start": {
+					From: []TaskStatus{"todo"},
+					To:   "active",
+					Steps: []Step{{
+						Name: "noop",
+						When: map[string]string{"task.repo": "cloud"},
+						Cmd:  []string{"./bin/noop"},
+					}},
+				},
+			},
+		}},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected invalid when selector error")
 	}
 }
