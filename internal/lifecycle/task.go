@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -23,7 +24,7 @@ func NewTaskService(s store.Store, runner steps.Runner) TaskService {
 	return TaskService{store: s, runner: runner, now: time.Now}
 }
 
-func (s TaskService) Create(projectSlug, repo, name string, labels []string, traits map[string]string) (model.TaskState, error) {
+func (s TaskService) Create(projectSlug, name string, labels []string, vars map[string]string) (model.TaskState, error) {
 	cfg, err := s.store.LoadConfig()
 	if err != nil {
 		return model.TaskState{}, err
@@ -31,31 +32,32 @@ func (s TaskService) Create(projectSlug, repo, name string, labels []string, tra
 	if _, err := s.store.LoadProject(projectSlug); err != nil {
 		return model.TaskState{}, err
 	}
-	if err := cfg.ValidateTraitOverrides("task", traits); err != nil {
+	if err := cfg.ValidateVarOverrides("task", vars); err != nil {
 		return model.TaskState{}, err
 	}
 
-	slug, err := renderTaskSlug(cfg.Naming.TaskSlug, repo, name)
+	mergedVars := model.MergeVars(cfg.Defaults.Task.Vars, vars)
+	if err := cfg.ValidateRequiredVars("task", mergedVars); err != nil {
+		return model.TaskState{}, err
+	}
+
+	slug, err := renderTaskSlug(cfg.Naming.TaskSlug, projectSlug, name, mergedVars)
 	if err != nil {
 		return model.TaskState{}, err
 	}
 
-	mergedTraits := mergeMap(cfg.Defaults.Task.Traits, traits)
 	now := s.now().UTC().Format(time.RFC3339)
 	task := model.TaskState{
 		Version:   1,
 		Slug:      slug,
 		Project:   projectSlug,
-		Repo:      repo,
-		Status:    model.TaskStatusActive,
+		Status:    cfg.Workflow.Task.InitialStatus,
 		Labels:    append([]string{}, append(cfg.Defaults.Task.Labels, labels...)...),
-		Traits:    mergedTraits,
+		Vars:      mergedVars,
 		CreatedAt: now,
 		UpdatedAt: now,
-		Handoff:   false,
 		Session:   model.TaskSessionState{Active: "S-001"},
-		MR:        model.TaskMRState{Status: initialMRStatus(mergedTraits)},
-		Worktree:  model.TaskWorktreeState{Status: model.WorktreeStatusMissing},
+		LastOp:    model.OperationState{Cmd: "tasks.create", OK: true, At: now},
 	}
 
 	if err := s.store.ScaffoldTask(task); err != nil {
@@ -66,39 +68,23 @@ func (s TaskService) Create(projectSlug, repo, name string, labels []string, tra
 		Version:   1,
 		ID:        "S-001",
 		Task:      task.Slug,
-		Status:    string(model.TaskStatusActive),
+		Status:    string(task.Status),
 		CreatedAt: now,
 		UpdatedAt: now,
+		LastOp:    task.LastOp,
 	}
 	if err := s.store.SaveSession(projectSlug, slug, session); err != nil {
 		return model.TaskState{}, err
 	}
 
-	stepInput, err := stepContext(s.store.Root(), cfg, task)
-	if err != nil {
-		return model.TaskState{}, err
-	}
-	phaseResult, err := s.runner.RunPhase(context.Background(), model.TaskStartPhase, cfg.Steps[model.TaskStartPhase], stepInput)
-	if err != nil {
-		return model.TaskState{}, err
-	}
-	s.syncArtifacts(&task, phaseResult)
-
-	if !phaseResult.OK {
-		applyFailedOperation(&task, "tasks.create", phaseResult)
-		_ = s.store.SaveTask(task)
-		return task, errors.New(task.LastOp.Error)
-	}
-
-	applySucceededOperation(&task, "tasks.create", phaseResult)
-	if err := s.store.SaveTask(task); err != nil {
+	if err := s.refreshProjectCounts(projectSlug); err != nil {
 		return model.TaskState{}, err
 	}
 
 	return task, nil
 }
 
-func (s TaskService) Done(projectSlug, taskSlug string) (model.TaskState, error) {
+func (s TaskService) Transition(projectSlug, taskSlug, transitionName string) (model.TaskState, error) {
 	cfg, err := s.store.LoadConfig()
 	if err != nil {
 		return model.TaskState{}, err
@@ -108,19 +94,36 @@ func (s TaskService) Done(projectSlug, taskSlug string) (model.TaskState, error)
 	if err != nil {
 		return model.TaskState{}, err
 	}
-
-	stepInput, err := stepContext(s.store.Root(), cfg, task)
+	project, err := s.store.LoadProject(projectSlug)
 	if err != nil {
 		return model.TaskState{}, err
 	}
-	phaseResult, err := s.runner.RunPhase(context.Background(), model.TaskDonePhase, cfg.Steps[model.TaskDonePhase], stepInput)
+
+	transition, ok := cfg.Workflow.Task.Transitions[transitionName]
+	if !ok {
+		return task, fmt.Errorf("task transition %q is not declared", transitionName)
+	}
+	if !statusAllowed(task.Status, transition.From) {
+		return task, fmt.Errorf("task transition %q is not allowed from status %q", transitionName, task.Status)
+	}
+	for _, required := range transition.Requires {
+		if task.Vars[required] == "" {
+			return task, fmt.Errorf("task transition %q requires task var %q", transitionName, required)
+		}
+	}
+
+	stepInput, err := s.stepContext(project, task, transitionName)
 	if err != nil {
 		return model.TaskState{}, err
 	}
-	s.syncArtifacts(&task, phaseResult)
+	result, err := s.runner.Run(context.Background(), transitionName, transition.Steps, stepInput)
+	if err != nil {
+		return model.TaskState{}, err
+	}
+	s.syncArtifacts(&task, result)
 
-	if !phaseResult.OK {
-		applyFailedOperation(&task, "tasks.done", phaseResult)
+	if !result.OK {
+		applyFailedOperation(&task, "tasks.transition", result, s.now)
 		task.UpdatedAt = s.now().UTC().Format(time.RFC3339)
 		if saveErr := s.store.SaveTask(task); saveErr != nil {
 			return model.TaskState{}, saveErr
@@ -128,75 +131,27 @@ func (s TaskService) Done(projectSlug, taskSlug string) (model.TaskState, error)
 		return task, errors.New(task.LastOp.Error)
 	}
 
-	activeSession := task.Session.Active
-	task.Status = model.TaskStatusDone
-	task.Session.Active = ""
-	if activeSession != "" {
-		task.Session.LastCompleted = &activeSession
-		if session, loadErr := s.store.LoadSession(projectSlug, taskSlug, activeSession); loadErr == nil {
-			session.Status = string(model.TaskStatusDone)
-			session.UpdatedAt = s.now().UTC().Format(time.RFC3339)
-			_ = s.store.SaveSession(projectSlug, taskSlug, session)
-		}
-	}
+	task.Status = transition.To
 	task.UpdatedAt = s.now().UTC().Format(time.RFC3339)
-	applySucceededOperation(&task, "tasks.done", phaseResult)
+	applySucceededOperation(&task, "tasks.transition", result, s.now)
+	if cfg.Workflow.Task.IsTerminal(task.Status) {
+		s.completeSession(projectSlug, taskSlug, &task)
+	} else {
+		s.syncActiveSession(projectSlug, taskSlug, task.Status)
+	}
 	if err := s.store.SaveTask(task); err != nil {
+		return model.TaskState{}, err
+	}
+	if err := s.refreshProjectCounts(projectSlug); err != nil {
 		return model.TaskState{}, err
 	}
 
 	return task, nil
 }
 
-func (s TaskService) Cleanup(projectSlug, taskSlug string) (model.TaskState, error) {
-	cfg, err := s.store.LoadConfig()
-	if err != nil {
-		return model.TaskState{}, err
-	}
-
-	task, err := s.store.LoadTask(projectSlug, taskSlug)
-	if err != nil {
-		return model.TaskState{}, err
-	}
-
-	if task.Status != model.TaskStatusDone && task.Status != model.TaskStatusCancelled {
-		return task, errors.New("task cleanup requires done or cancelled status")
-	}
-
-	stepInput, err := stepContext(s.store.Root(), cfg, task)
-	if err != nil {
-		return model.TaskState{}, err
-	}
-	phaseResult, err := s.runner.RunPhase(context.Background(), model.TaskCleanupPhase, cfg.Steps[model.TaskCleanupPhase], stepInput)
-	if err != nil {
-		return model.TaskState{}, err
-	}
-	s.syncArtifacts(&task, phaseResult)
-
-	if !phaseResult.OK {
-		applyFailedOperation(&task, "tasks.cleanup", phaseResult)
-		task.UpdatedAt = s.now().UTC().Format(time.RFC3339)
-		if saveErr := s.store.SaveTask(task); saveErr != nil {
-			return model.TaskState{}, saveErr
-		}
-		return task, errors.New(task.LastOp.Error)
-	}
-
-	if task.Worktree.Status == model.WorktreeStatusPresent {
-		task.Worktree.Status = model.WorktreeStatusCleaned
-	}
-	task.UpdatedAt = s.now().UTC().Format(time.RFC3339)
-	applySucceededOperation(&task, "tasks.cleanup", phaseResult)
-	if err := s.store.SaveTask(task); err != nil {
-		return model.TaskState{}, err
-	}
-
-	return task, nil
-}
-
-func renderTaskSlug(pattern, repo, name string) (string, error) {
+func renderTaskSlug(pattern, projectSlug, name string, vars map[string]string) (string, error) {
 	if pattern == "" {
-		return repo + "-" + name, nil
+		return name, nil
 	}
 
 	tmpl, err := template.New("task_slug").Option("missingkey=error").Parse(pattern)
@@ -205,60 +160,41 @@ func renderTaskSlug(pattern, repo, name string) (string, error) {
 	}
 
 	var builder strings.Builder
-	if err := tmpl.Execute(&builder, map[string]string{"repo": repo, "name": name}); err != nil {
+	if err := tmpl.Execute(&builder, map[string]any{
+		"name":    name,
+		"project": map[string]string{"slug": projectSlug},
+		"vars":    vars,
+	}); err != nil {
 		return "", err
 	}
 
 	return builder.String(), nil
 }
 
-func mergeMap(base, override map[string]string) map[string]string {
-	merged := map[string]string{}
-	for key, value := range base {
-		merged[key] = value
-	}
-	for key, value := range override {
-		merged[key] = value
-	}
-	return merged
-}
-
-func initialMRStatus(traits map[string]string) model.MRStatus {
-	if traits["mr"] == "not-needed" {
-		return model.MRStatusNotNeeded
-	}
-	return model.MRStatusMissing
-}
-
-func stepContext(runtimeRoot string, cfg model.Config, task model.TaskState) (steps.Context, error) {
-	repoRoot := resolveRepoRoot(runtimeRoot, cfg, task.Repo)
-	branchName, err := renderStringTemplate(cfg.Naming.Branch, map[string]any{
-		"project": map[string]string{"slug": task.Project},
-		"task":    map[string]string{"slug": task.Slug},
-	})
+func (s TaskService) stepContext(project model.ProjectState, task model.TaskState, transition string) (steps.Context, error) {
+	artifacts, err := s.store.ListArtifacts(task.Project, task.Slug)
 	if err != nil {
 		return steps.Context{}, err
 	}
-	worktreePath, err := renderStringTemplate(cfg.Naming.Worktree, map[string]any{
-		"repo_root": repoRoot,
-		"project":   map[string]string{"slug": task.Project},
-		"task":      map[string]string{"slug": task.Slug},
-	})
-	if err != nil {
-		return steps.Context{}, err
-	}
-	taskDir := filepath.Join(runtimeRoot, "projects", "active", task.Project, "tasks", task.Slug)
+	taskDir := filepath.Join(s.store.Root(), "projects", "active", task.Project, "tasks", task.Slug)
 	return steps.Context{
-		RuntimeRoot:  runtimeRoot,
-		ProjectSlug:  task.Project,
-		TaskSlug:     task.Slug,
-		TaskRepo:     task.Repo,
-		TaskTraits:   task.Traits,
-		RepoRoot:     repoRoot,
-		BranchName:   branchName,
-		WorktreePath: worktreePath,
+		RuntimeRoot: s.store.Root(),
+		Project: steps.ProjectContext{
+			Slug:   project.Slug,
+			Status: string(project.Status),
+			Labels: project.Labels,
+			Vars:   project.Vars,
+		},
+		Task: steps.TaskContext{
+			Slug:   task.Slug,
+			Status: string(task.Status),
+			Labels: task.Labels,
+			Vars:   task.Vars,
+		},
 		TaskDir:      taskDir,
 		ArtifactsDir: filepath.Join(taskDir, "artifacts"),
+		Artifacts:    artifacts,
+		Transition:   transition,
 	}, nil
 }
 
@@ -266,56 +202,65 @@ func (s TaskService) syncArtifacts(task *model.TaskState, result steps.PhaseResu
 	for _, exec := range result.Steps {
 		for kind, data := range exec.Result.Artifacts {
 			_ = s.store.SaveArtifact(task.Project, task.Slug, kind, data)
-			s.applyArtifactSummary(task, kind, data)
 		}
 	}
 }
 
-func (s TaskService) applyArtifactSummary(task *model.TaskState, kind string, data map[string]string) {
-	switch kind {
-	case "worktree":
-		if status, ok := data["status"]; ok {
-			task.Worktree.Status = model.WorktreeStatus(status)
-		}
-	case "mr":
-		if status, ok := data["status"]; ok {
-			task.MR.Status = model.MRStatus(status)
-		}
-		if reason, ok := data["reason"]; ok && reason != "" {
-			task.MR.Reason = &reason
-		}
-	case "branch":
-	case "repository":
-	default:
+func (s TaskService) completeSession(projectSlug, taskSlug string, task *model.TaskState) {
+	activeSession := task.Session.Active
+	task.Session.Active = ""
+	if activeSession == "" {
 		return
 	}
+	task.Session.LastCompleted = &activeSession
+	if session, loadErr := s.store.LoadSession(projectSlug, taskSlug, activeSession); loadErr == nil {
+		session.Status = string(task.Status)
+		session.UpdatedAt = s.now().UTC().Format(time.RFC3339)
+		session.LastOp = task.LastOp
+		_ = s.store.SaveSession(projectSlug, taskSlug, session)
+	}
 }
 
-func resolveRepoRoot(runtimeRoot string, cfg model.Config, repo string) string {
-	if cfg.Repos != nil {
-		if rel, ok := cfg.Repos[repo]; ok && rel != "" {
-			return filepath.Clean(filepath.Join(runtimeRoot, rel))
+func (s TaskService) syncActiveSession(projectSlug, taskSlug string, status model.TaskStatus) {
+	task, err := s.store.LoadTask(projectSlug, taskSlug)
+	if err != nil || task.Session.Active == "" {
+		return
+	}
+	if session, loadErr := s.store.LoadSession(projectSlug, taskSlug, task.Session.Active); loadErr == nil {
+		session.Status = string(status)
+		session.UpdatedAt = s.now().UTC().Format(time.RFC3339)
+		_ = s.store.SaveSession(projectSlug, taskSlug, session)
+	}
+}
+
+func (s TaskService) refreshProjectCounts(projectSlug string) error {
+	project, err := s.store.LoadProject(projectSlug)
+	if err != nil {
+		return err
+	}
+	tasks, err := s.store.ListTasks(projectSlug)
+	if err != nil {
+		return err
+	}
+	counts := model.TaskCounts{}
+	for _, task := range tasks {
+		counts[string(task.Status)]++
+	}
+	project.Tasks = counts
+	project.UpdatedAt = s.now().UTC().Format(time.RFC3339)
+	return s.store.SaveProject(project)
+}
+
+func statusAllowed(current model.TaskStatus, allowed []model.TaskStatus) bool {
+	for _, status := range allowed {
+		if current == status {
+			return true
 		}
 	}
-	return filepath.Clean(filepath.Join(runtimeRoot, "..", repo))
+	return false
 }
 
-func renderStringTemplate(pattern string, values map[string]any) (string, error) {
-	if pattern == "" {
-		return "", nil
-	}
-	tmpl, err := template.New("runtime").Option("missingkey=error").Parse(pattern)
-	if err != nil {
-		return "", err
-	}
-	var builder strings.Builder
-	if err := tmpl.Execute(&builder, values); err != nil {
-		return "", err
-	}
-	return builder.String(), nil
-}
-
-func applyFailedOperation(task *model.TaskState, cmd string, result steps.PhaseResult) {
+func applyFailedOperation(task *model.TaskState, cmd string, result steps.PhaseResult, now func() time.Time) {
 	message := "step execution failed"
 	if len(result.Steps) > 0 {
 		message = result.Steps[len(result.Steps)-1].Result.Message
@@ -325,15 +270,15 @@ func applyFailedOperation(task *model.TaskState, cmd string, result steps.PhaseR
 		OK:    false,
 		Step:  result.FailedStep,
 		Error: message,
-		At:    time.Now().UTC().Format(time.RFC3339),
+		At:    now().UTC().Format(time.RFC3339),
 	}
 }
 
-func applySucceededOperation(task *model.TaskState, cmd string, result steps.PhaseResult) {
+func applySucceededOperation(task *model.TaskState, cmd string, result steps.PhaseResult, now func() time.Time) {
 	task.LastOp = model.OperationState{
 		Cmd: cmd,
 		OK:  true,
-		At:  time.Now().UTC().Format(time.RFC3339),
+		At:  now().UTC().Format(time.RFC3339),
 	}
 	if len(result.Steps) > 0 {
 		task.LastOp.Step = result.Steps[len(result.Steps)-1].Name

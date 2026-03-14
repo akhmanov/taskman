@@ -11,30 +11,38 @@ import (
 	"github.com/assistant-wi/taskman/internal/store"
 )
 
-func TestTaskServiceCreateScaffoldsInitialSession(t *testing.T) {
+func TestTaskServiceCreateScaffoldsInitialSessionWithoutRunningTransitions(t *testing.T) {
 	root := t.TempDir()
+	marker := filepath.Join(root, "start-ran")
 	writeConfig(t, root, `version: 1
 defaults:
   project:
     labels: []
-    traits: {}
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars:
+      kind: feature
+vars:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-steps:
-  task_start:
-    - name: create_worktree
-      cmd: [./bin/noop]
+    kind:
+      allowed: [feature, chore]
+naming:
+  task_slug: "{{ .name }}"
+workflow:
+  task:
+    statuses: [todo, active, done, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
+        steps:
+          - name: initialize
+            cmd: [./bin/start]
 `)
-	writeExecutable(t, filepath.Join(root, "bin", "noop"), "#!/bin/sh\necho '{\"ok\":true,\"message\":\"created\",\"artifacts\":{\"worktree\":{\"status\":\"present\",\"path\":\"/tmp/worktree\"}}}'\n")
+	writeExecutable(t, filepath.Join(root, "bin", "start"), "#!/bin/sh\ntouch \""+marker+"\"\necho '{\"ok\":true,\"message\":\"started\"}'\n")
 
 	s := store.New(root)
 	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
@@ -42,95 +50,95 @@ steps:
 	}
 
 	svc := NewTaskService(s, steps.New(root))
-	task, err := svc.Create("user-permissions", "cloud", "api-auth", nil, nil)
+	task, err := svc.Create("user-permissions", "api-auth", nil, nil)
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
 
-	if task.Slug != "cloud-api-auth" {
+	if task.Slug != "api-auth" {
 		t.Fatalf("task slug = %q", task.Slug)
 	}
 
+	if task.Status != model.TaskStatus("todo") {
+		t.Fatalf("task status = %q, want todo", task.Status)
+	}
+
 	if task.Session.Active != "S-001" {
-		t.Fatalf("active session = %q", task.Session.Active)
+		t.Fatalf("active session = %q, want S-001", task.Session.Active)
 	}
 
-	if task.Worktree.Status != model.WorktreeStatusPresent {
-		t.Fatalf("worktree status = %q, want present", task.Worktree.Status)
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("start marker should not exist, stat err = %v", err)
 	}
 
-	sessionPath := filepath.Join(root, "projects", "active", "user-permissions", "tasks", "cloud-api-auth", "sessions", "S-001", "state.yaml")
+	sessionPath := filepath.Join(root, "projects", "active", "user-permissions", "tasks", "api-auth", "sessions", "S-001", "state.yaml")
 	if _, err := os.Stat(sessionPath); err != nil {
 		t.Fatalf("session state missing: %v", err)
 	}
 
-	artifactPath := filepath.Join(root, "projects", "active", "user-permissions", "tasks", "cloud-api-auth", "artifacts", "worktree.yaml")
-	data, err := os.ReadFile(artifactPath)
-	if err != nil {
-		t.Fatalf("read worktree artifact: %v", err)
-	}
-	if !strings.Contains(string(data), "status: present") {
-		t.Fatalf("unexpected worktree artifact: %s", string(data))
+	artifactPath := filepath.Join(root, "projects", "active", "user-permissions", "tasks", "api-auth", "artifacts", "worktree.yaml")
+	if _, err := os.Stat(artifactPath); !os.IsNotExist(err) {
+		t.Fatalf("artifact should not exist after create, stat err = %v", err)
 	}
 }
 
-func TestTaskServiceDonePersistsFailedOperationWithoutChangingStatus(t *testing.T) {
+func TestTaskServiceTransitionPersistsFailedOperationWithoutChangingStatus(t *testing.T) {
 	root := t.TempDir()
 	writeConfig(t, root, `version: 1
 defaults:
   project:
     labels: []
-    traits: {}
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars:
+      kind: feature
+vars:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-steps:
-  task_done:
-    - name: validate_ready_mr
-      when:
-        task.traits.mr: required
-      cmd: [./bin/fail-mr]
+    kind:
+      allowed: [feature, chore]
+workflow:
+  task:
+    statuses: [todo, active, done, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      complete:
+        from: [active]
+        to: done
+        steps:
+          - name: validate_ready_review
+            cmd: [./bin/fail-review]
 `)
-	writeExecutable(t, filepath.Join(root, "bin", "fail-mr"), "#!/bin/sh\necho '{\"ok\":false,\"message\":\"merge request still draft\"}'\nexit 1\n")
+	writeExecutable(t, filepath.Join(root, "bin", "fail-review"), "#!/bin/sh\necho '{\"ok\":false,\"message\":\"review still blocked\"}'\nexit 1\n")
 
 	s := store.New(root)
 	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
 		t.Fatalf("scaffold project: %v", err)
 	}
 	if err := s.ScaffoldTask(model.TaskState{
-		Version:  1,
-		Slug:     "cloud-api-auth",
-		Project:  "user-permissions",
-		Repo:     "cloud",
-		Status:   model.TaskStatusActive,
-		Traits:   map[string]string{"mr": "required", "worktree": "required"},
-		Session:  model.TaskSessionState{Active: "S-001"},
-		MR:       model.TaskMRState{Status: model.MRStatusDraft},
-		Worktree: model.TaskWorktreeState{Status: model.WorktreeStatusPresent},
+		Version: 1,
+		Slug:    "api-auth",
+		Project: "user-permissions",
+		Status:  model.TaskStatus("active"),
+		Vars:    map[string]string{"kind": "feature"},
+		Session: model.TaskSessionState{Active: "S-001"},
 	}); err != nil {
 		t.Fatalf("scaffold task: %v", err)
 	}
 
 	svc := NewTaskService(s, steps.New(root))
-	_, err := svc.Done("user-permissions", "cloud-api-auth")
+	_, err := svc.Transition("user-permissions", "api-auth", "complete")
 	if err == nil {
-		t.Fatal("expected done error")
+		t.Fatal("expected transition error")
 	}
 
-	loaded, err := s.LoadTask("user-permissions", "cloud-api-auth")
+	loaded, err := s.LoadTask("user-permissions", "api-auth")
 	if err != nil {
 		t.Fatalf("load task: %v", err)
 	}
 
-	if loaded.Status != model.TaskStatusActive {
+	if loaded.Status != model.TaskStatus("active") {
 		t.Fatalf("status = %q, want active", loaded.Status)
 	}
 
@@ -138,143 +146,82 @@ steps:
 		t.Fatal("last op should be failed")
 	}
 
-	if loaded.LastOp.Step != "validate_ready_mr" {
+	if loaded.LastOp.Step != "validate_ready_review" {
 		t.Fatalf("last op step = %q", loaded.LastOp.Step)
 	}
 }
 
-func TestTaskServiceCleanupPersistsCleanedWorktreeState(t *testing.T) {
+func TestTaskServiceTransitionPersistsArtifactsAndTerminalSessionState(t *testing.T) {
 	root := t.TempDir()
 	writeConfig(t, root, `version: 1
 defaults:
   project:
     labels: []
-    traits: {}
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars:
+      kind: feature
+vars:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-steps:
-  task_cleanup:
-    - name: remove_worktree
-      when:
-        task.traits.worktree: required
-      cmd: [./bin/cleanup-worktree]
+    kind:
+      allowed: [feature, chore]
+workflow:
+  task:
+    statuses: [todo, active, done, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      close:
+        from: [done]
+        to: closed
+        steps:
+          - name: persist_summary
+            cmd: [./bin/close-task]
 `)
-	writeExecutable(t, filepath.Join(root, "bin", "cleanup-worktree"), "#!/bin/sh\necho '{\"ok\":true,\"message\":\"worktree removed\",\"artifacts\":{\"worktree\":{\"status\":\"cleaned\",\"path\":\"/tmp/worktree\"}}}'\n")
+	writeExecutable(t, filepath.Join(root, "bin", "close-task"), "#!/bin/sh\necho '{\"ok\":true,\"message\":\"closed\",\"artifacts\":{\"summary\":{\"state\":\"archived\"}}}'\n")
 
 	s := store.New(root)
 	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
 		t.Fatalf("scaffold project: %v", err)
 	}
 	if err := s.ScaffoldTask(model.TaskState{
-		Version:  1,
-		Slug:     "cloud-api-auth",
-		Project:  "user-permissions",
-		Repo:     "cloud",
-		Status:   model.TaskStatusDone,
-		Traits:   map[string]string{"mr": "required", "worktree": "required"},
-		Session:  model.TaskSessionState{},
-		MR:       model.TaskMRState{Status: model.MRStatusReady},
-		Worktree: model.TaskWorktreeState{Status: model.WorktreeStatusPresent},
+		Version: 1,
+		Slug:    "api-auth",
+		Project: "user-permissions",
+		Status:  model.TaskStatus("done"),
+		Vars:    map[string]string{"kind": "feature"},
+		Session: model.TaskSessionState{Active: "S-001"},
 	}); err != nil {
 		t.Fatalf("scaffold task: %v", err)
 	}
+	if err := s.SaveSession("user-permissions", "api-auth", model.SessionState{Version: 1, ID: "S-001", Task: "api-auth", Status: "done"}); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
 
 	svc := NewTaskService(s, steps.New(root))
-	task, err := svc.Cleanup("user-permissions", "cloud-api-auth")
+	task, err := svc.Transition("user-permissions", "api-auth", "close")
 	if err != nil {
-		t.Fatalf("cleanup task: %v", err)
+		t.Fatalf("transition task: %v", err)
 	}
 
-	if task.Worktree.Status != model.WorktreeStatusCleaned {
-		t.Fatalf("worktree status = %q", task.Worktree.Status)
+	if task.Status != model.TaskStatus("closed") {
+		t.Fatalf("task status = %q, want closed", task.Status)
 	}
-	if task.LastOp.Cmd != "tasks.cleanup" || !task.LastOp.OK {
-		t.Fatalf("last op = %+v", task.LastOp)
+	if task.Session.Active != "" {
+		t.Fatalf("active session = %q, want empty", task.Session.Active)
+	}
+	if task.Session.LastCompleted == nil || *task.Session.LastCompleted != "S-001" {
+		t.Fatalf("last completed = %#v", task.Session.LastCompleted)
 	}
 
-	artifactPath := filepath.Join(root, "projects", "active", "user-permissions", "tasks", "cloud-api-auth", "artifacts", "worktree.yaml")
+	artifactPath := filepath.Join(root, "projects", "active", "user-permissions", "tasks", "api-auth", "artifacts", "summary.yaml")
 	data, err := os.ReadFile(artifactPath)
 	if err != nil {
-		t.Fatalf("read worktree artifact: %v", err)
+		t.Fatalf("read summary artifact: %v", err)
 	}
-	if !strings.Contains(string(data), "status: cleaned") {
-		t.Fatalf("unexpected artifact after cleanup: %s", string(data))
-	}
-}
-
-func TestTaskServiceCleanupFailsSafelyForDirtyWorktree(t *testing.T) {
-	root := t.TempDir()
-	writeConfig(t, root, `version: 1
-defaults:
-  project:
-    labels: []
-    traits: {}
-  task:
-    labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
-  task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-steps:
-  task_cleanup:
-    - name: remove_worktree
-      when:
-        task.traits.worktree: required
-      cmd: [./bin/cleanup-worktree]
-`)
-	writeExecutable(t, filepath.Join(root, "bin", "cleanup-worktree"), "#!/bin/sh\necho '{\"ok\":false,\"message\":\"dirty worktree detected\"}'\nexit 1\n")
-
-	s := store.New(root)
-	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
-		t.Fatalf("scaffold project: %v", err)
-	}
-	if err := s.ScaffoldTask(model.TaskState{
-		Version:  1,
-		Slug:     "cloud-api-auth",
-		Project:  "user-permissions",
-		Repo:     "cloud",
-		Status:   model.TaskStatusDone,
-		Traits:   map[string]string{"mr": "required", "worktree": "required"},
-		Session:  model.TaskSessionState{},
-		MR:       model.TaskMRState{Status: model.MRStatusReady},
-		Worktree: model.TaskWorktreeState{Status: model.WorktreeStatusPresent},
-	}); err != nil {
-		t.Fatalf("scaffold task: %v", err)
-	}
-
-	svc := NewTaskService(s, steps.New(root))
-	_, err := svc.Cleanup("user-permissions", "cloud-api-auth")
-	if err == nil {
-		t.Fatal("expected cleanup error")
-	}
-
-	task, err := s.LoadTask("user-permissions", "cloud-api-auth")
-	if err != nil {
-		t.Fatalf("reload task: %v", err)
-	}
-
-	if task.Worktree.Status != model.WorktreeStatusPresent {
-		t.Fatalf("worktree status = %q, want present", task.Worktree.Status)
-	}
-	if task.LastOp.OK {
-		t.Fatal("expected failed cleanup operation")
-	}
-	if task.LastOp.Step != "remove_worktree" {
-		t.Fatalf("cleanup failed step = %q", task.LastOp.Step)
+	if !strings.Contains(string(data), "state: archived") {
+		t.Fatalf("unexpected artifact after transition: %s", string(data))
 	}
 }
 
@@ -284,56 +231,57 @@ func TestTaskServiceCreateFailsForMissingProject(t *testing.T) {
 defaults:
   project:
     labels: []
-    traits: {}
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars: {}
+workflow:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-naming:
-  task_slug: "{{ .repo }}-{{ .name }}"
-steps: {}
+    statuses: [todo, active, done]
+    initial_status: todo
+    terminal_statuses: [done]
+    transitions:
+      start:
+        from: [todo]
+        to: active
 `)
 
 	svc := NewTaskService(store.New(root), steps.New(root))
-	_, err := svc.Create("missing-project", "cloud", "api-auth", nil, nil)
+	_, err := svc.Create("missing-project", "api-auth", nil, nil)
 	if err == nil {
 		t.Fatal("expected create error")
 	}
 
-	taskDir := filepath.Join(root, "projects", "active", "missing-project", "tasks", "cloud-api-auth")
+	taskDir := filepath.Join(root, "projects", "active", "missing-project", "tasks", "api-auth")
 	if _, statErr := os.Stat(taskDir); !os.IsNotExist(statErr) {
 		t.Fatalf("task dir should not exist, stat err = %v", statErr)
 	}
 }
 
-func TestTaskServiceCreateFailsForInvalidTraitOverride(t *testing.T) {
+func TestTaskServiceCreateFailsForInvalidVarOverride(t *testing.T) {
 	root := t.TempDir()
 	writeConfig(t, root, `version: 1
 defaults:
   project:
     labels: []
-    traits: {}
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars:
+      kind: feature
+vars:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-naming:
-  task_slug: "{{ .repo }}-{{ .name }}"
-steps: {}
+    kind:
+      allowed: [feature, chore]
+workflow:
+  task:
+    statuses: [todo, active, done]
+    initial_status: todo
+    terminal_statuses: [done]
+    transitions:
+      start:
+        from: [todo]
+        to: active
 `)
 	s := store.New(root)
 	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
@@ -341,12 +289,12 @@ steps: {}
 	}
 
 	svc := NewTaskService(s, steps.New(root))
-	_, err := svc.Create("user-permissions", "cloud", "api-auth", nil, map[string]string{"mr": "sometimes"})
+	_, err := svc.Create("user-permissions", "api-auth", nil, map[string]string{"kind": "incident"})
 	if err == nil {
-		t.Fatal("expected invalid trait error")
+		t.Fatal("expected invalid var error")
 	}
 
-	taskDir := filepath.Join(root, "projects", "active", "user-permissions", "tasks", "cloud-api-auth")
+	taskDir := filepath.Join(root, "projects", "active", "user-permissions", "tasks", "api-auth")
 	if _, statErr := os.Stat(taskDir); !os.IsNotExist(statErr) {
 		t.Fatalf("task dir should not exist, stat err = %v", statErr)
 	}
@@ -358,39 +306,34 @@ func TestTaskServiceCreateFailsBeforeScaffoldingWhenNamingTemplateIsBroken(t *te
 defaults:
   project:
     labels: []
-    traits: {}
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
-  task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
+    vars: {}
 naming:
-  task_slug: "{{ .repo }}-{{ .name }}"
-  branch: "task/{{ .project.slug }"
-steps:
-  task_start:
-    - name: noop
-      cmd: [./bin/noop]
+  task_slug: "{{ .project.slug }"
+workflow:
+  task:
+    statuses: [todo, active, done]
+    initial_status: todo
+    terminal_statuses: [done]
+    transitions:
+      start:
+        from: [todo]
+        to: active
 `)
-	writeExecutable(t, filepath.Join(root, "bin", "noop"), "#!/bin/sh\necho '{\"ok\":true,\"message\":\"created\"}'\n")
 	s := store.New(root)
 	if err := s.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
 		t.Fatalf("scaffold project: %v", err)
 	}
 
 	svc := NewTaskService(s, steps.New(root))
-	_, err := svc.Create("user-permissions", "cloud", "api-auth", nil, nil)
+	_, err := svc.Create("user-permissions", "api-auth", nil, nil)
 	if err == nil {
 		t.Fatal("expected broken template error")
 	}
 
-	taskDir := filepath.Join(root, "projects", "active", "user-permissions", "tasks", "cloud-api-auth")
+	taskDir := filepath.Join(root, "projects", "active", "user-permissions", "tasks", "api-auth")
 	if _, statErr := os.Stat(taskDir); !os.IsNotExist(statErr) {
 		t.Fatalf("task dir should not exist, stat err = %v", statErr)
 	}
