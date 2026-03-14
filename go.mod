@@ -1,4 +1,4 @@
-module github.com/assistant-wi/taskman
+module github.com/akhmanov/taskman
 
 go 1.24.0
 

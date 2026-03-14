@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/assistant-wi/taskman/internal/cli"
+	"github.com/akhmanov/taskman/internal/cli"
 )
 
 func main() {
