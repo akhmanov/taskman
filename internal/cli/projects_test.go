@@ -36,7 +36,7 @@ workflow:
 `)
 
 	cmd := BuildApp()
-	err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "create", "user-permissions"})
+	err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "add", "user-permissions"})
 	if err != nil {
 		t.Fatalf("run command: %v", err)
 	}
@@ -84,7 +84,7 @@ workflow:
 `)
 
 	cmd := BuildApp()
-	err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "create", "user-permissions", "--label", "auth", "--var", "area=product"})
+	err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "add", "user-permissions", "--label", "auth", "--var", "area=product"})
 	if err != nil {
 		t.Fatalf("run command: %v", err)
 	}
@@ -129,7 +129,7 @@ workflow:
 `)
 
 	cmd := BuildApp()
-	err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "create", "user-permissions", "--var", "area=unknown"})
+	err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "add", "user-permissions", "--var", "area=unknown"})
 	if err == nil {
 		t.Fatal("expected invalid var error")
 	}
@@ -157,7 +157,7 @@ workflow:
 `)
 
 	cmd := BuildApp()
-	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "create", "user-permissions"}); err != nil {
+	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "add", "user-permissions"}); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
 
@@ -170,7 +170,7 @@ workflow:
 	os.Stdout = w
 	defer func() { os.Stdout = originalStdout }()
 
-	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "describe", "user-permissions", "--view", "raw", "--output", "yaml"}); err != nil {
+	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "show", "user-permissions", "--view", "raw", "--output", "yaml"}); err != nil {
 		t.Fatalf("projects describe yaml: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -234,7 +234,7 @@ workflow:
 	os.Stdout = w
 	defer func() { os.Stdout = originalStdout }()
 
-	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "get"}); err != nil {
+	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "list"}); err != nil {
 		t.Fatalf("projects get: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -287,7 +287,7 @@ workflow:
 	os.Stdout = w
 	defer func() { os.Stdout = originalStdout }()
 
-	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "describe", "user-permissions"}); err != nil {
+	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "show", "user-permissions"}); err != nil {
 		t.Fatalf("projects describe: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -354,7 +354,7 @@ workflow:
 	os.Stdout = w
 	defer func() { os.Stdout = originalStdout }()
 
-	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "describe", "user-permissions", "--view", "raw", "--output", "json"}); err != nil {
+	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "show", "user-permissions", "--view", "raw", "--output", "json"}); err != nil {
 		t.Fatalf("projects describe raw: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -435,7 +435,7 @@ workflow:
 	os.Stdout = w
 	defer func() { os.Stdout = originalStdout }()
 
-	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "describe", "user-permissions", "--view", "agent", "--output", "json"}); err != nil {
+	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "show", "user-permissions", "--view", "agent", "--output", "json"}); err != nil {
 		t.Fatalf("projects describe agent: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -518,7 +518,7 @@ workflow:
 	originalStdout := os.Stdout
 	os.Stdout = w
 	defer func() { os.Stdout = originalStdout }()
-	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "describe", "user-permissions", "--view", "agent"}); err != nil {
+	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "show", "user-permissions", "--view", "agent"}); err != nil {
 		t.Fatalf("projects describe agent text: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -586,7 +586,7 @@ workflow:
 	}
 
 	cmd := BuildApp()
-	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "update", "user-permissions", "--label", "auth", "--label", "api", "--var", "area=product"}); err != nil {
+	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "update", "user-permissions", "--label", "auth", "--label", "api", "--var", "area=product"}); err != nil {
 		t.Fatalf("projects update: %v", err)
 	}
 
@@ -629,7 +629,7 @@ workflow:
 
 	want := "# Mission\n\nUse bounded payload memory.\n\n# Boundaries\n\n## In Scope\n\nTask context.\n\n## Out of Scope\n\nLong-form docs.\n\n# Glossary\n\n- Brief\n\n# Shared Decisions\n\n- Keep current truth separate.\n\n# Active Risks\n\n- Comment sprawl.\n\n# Tasking Rules\n\n- Prefer describe --view agent.\n\n# References\n\n- plan://payload-layer\n"
 	cmd := BuildApp()
-	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "brief", "set", "user-permissions", "--content", want}); err != nil {
+	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "brief", "set", "user-permissions", "--content", want}); err != nil {
 		t.Fatalf("projects brief set: %v", err)
 	}
 
@@ -642,7 +642,7 @@ workflow:
 	os.Stdout = w
 	defer func() { os.Stdout = originalStdout }()
 
-	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "brief", "get", "user-permissions"}); err != nil {
+	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "brief", "show", "user-permissions"}); err != nil {
 		t.Fatalf("projects brief get: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -689,7 +689,7 @@ workflow:
 	}
 
 	cmd := BuildApp()
-	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "brief", "set", "user-permissions", "--file", briefPath}); err != nil {
+	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "brief", "set", "user-permissions", "--file", briefPath}); err != nil {
 		t.Fatalf("projects brief set --file: %v", err)
 	}
 
@@ -731,7 +731,7 @@ workflow:
 	}
 
 	cmd := BuildApp()
-	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "brief", "init", "user-permissions", "--force"}); err != nil {
+	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "brief", "init", "user-permissions", "--force"}); err != nil {
 		t.Fatalf("projects brief init: %v", err)
 	}
 
@@ -777,7 +777,7 @@ workflow:
 	t.Setenv("EDITOR", editorPath)
 
 	cmd := BuildApp()
-	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "brief", "edit", "user-permissions"}); err != nil {
+	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "brief", "edit", "user-permissions"}); err != nil {
 		t.Fatalf("projects brief edit: %v", err)
 	}
 
@@ -818,7 +818,7 @@ workflow:
 	cmd := BuildApp()
 	if err := cmd.Run(context.Background(), []string{
 		"taskman", "--root", root,
-		"projects", "event", "add", "user-permissions",
+		"project", "event", "add", "user-permissions",
 		"--id", "EVT-001",
 		"--at", "2026-03-14T10:35:00Z",
 		"--type", "decision",
@@ -842,7 +842,7 @@ workflow:
 	os.Stdout = w
 	defer func() { os.Stdout = originalStdout }()
 
-	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "event", "get", "user-permissions", "--output", "json"}); err != nil {
+	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "event", "list", "user-permissions", "--output", "json"}); err != nil {
 		t.Fatalf("projects event get: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -908,7 +908,7 @@ workflow:
 	}
 
 	cmd := BuildApp()
-	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "update", "user-permissions", "--unset-var", "owner"}); err != nil {
+	if err := cmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "update", "user-permissions", "--unset-var", "owner"}); err != nil {
 		t.Fatalf("projects update unset-var: %v", err)
 	}
 
@@ -964,7 +964,7 @@ workflow:
 	os.Stdout = w
 	defer func() { os.Stdout = originalStdout }()
 
-	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "projects", "events", "get", "user-permissions", "--type", "blocker", "--active-only", "--output", "json"}); err != nil {
+	if err := readCmd.Run(context.Background(), []string{"taskman", "--root", root, "project", "event", "list", "user-permissions", "--type", "blocker", "--active-only", "--output", "json"}); err != nil {
 		t.Fatalf("projects events get with filters: %v", err)
 	}
 	if err := w.Close(); err != nil {
