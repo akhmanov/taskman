@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/assistant-wi/taskman/internal/model"
 )
@@ -84,12 +85,6 @@ func (s Store) ScaffoldTask(task model.TaskState) error {
 		}
 	}
 
-	for _, name := range []string{"repository.yaml", "branch.yaml", "worktree.yaml", "mr.yaml"} {
-		if err := writeIfMissing(filepath.Join(taskDir, "artifacts", name), []byte("version: 1\n")); err != nil {
-			return err
-		}
-	}
-
 	return writeYAML(filepath.Join(taskDir, "state.yaml"), task)
 }
 
@@ -113,7 +108,7 @@ func (s Store) LoadSession(projectSlug, taskSlug, sessionID string) (model.Sessi
 	return state, err
 }
 
-func (s Store) SaveArtifact(projectSlug, taskSlug, kind string, data map[string]string) error {
+func (s Store) SaveArtifact(projectSlug, taskSlug, kind string, data map[string]any) error {
 	state := model.ArtifactState{Version: 1, Data: data}
 	return writeYAML(filepath.Join(s.taskDir(projectSlug, taskSlug), "artifacts", kind+".yaml"), state)
 }
@@ -122,6 +117,34 @@ func (s Store) LoadArtifact(projectSlug, taskSlug, kind string) (model.ArtifactS
 	var state model.ArtifactState
 	err := readYAML(filepath.Join(s.taskDir(projectSlug, taskSlug), "artifacts", kind+".yaml"), &state)
 	return state, err
+}
+
+func (s Store) ListArtifacts(projectSlug, taskSlug string) (map[string]map[string]any, error) {
+	dir := filepath.Join(s.taskDir(projectSlug, taskSlug), "artifacts")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]map[string]any{}, nil
+		}
+		return nil, err
+	}
+
+	artifacts := map[string]map[string]any{}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yaml" {
+			continue
+		}
+		kind := strings.TrimSuffix(entry.Name(), ".yaml")
+		artifact, err := s.LoadArtifact(projectSlug, taskSlug, kind)
+		if err != nil {
+			return nil, err
+		}
+		if len(artifact.Data) > 0 {
+			artifacts[kind] = artifact.Data
+		}
+	}
+
+	return artifacts, nil
 }
 
 func (s Store) ArchiveProject(project model.ProjectState, year int) error {

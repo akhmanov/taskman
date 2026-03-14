@@ -15,22 +15,27 @@ func TestStoreLoadConfig(t *testing.T) {
 defaults:
   project:
     labels: []
-    traits: {}
+    vars: {}
   task:
     labels: []
-    traits:
-      mr: required
-      worktree: required
-traits:
-  project:
-    preview: [app-api, none]
+    vars:
+      kind: feature
+vars:
   task:
-    mr: [required, not-needed]
-    worktree: [required, optional]
-steps:
-  task_start:
-    - name: noop
-      cmd: [./bin/noop]
+    kind:
+      allowed: [feature, chore]
+workflow:
+  task:
+    statuses: [todo, active, blocked, done, cancelled, closed]
+    initial_status: todo
+    terminal_statuses: [closed]
+    transitions:
+      start:
+        from: [todo]
+        to: active
+      close:
+        from: [done, cancelled]
+        to: closed
 `)
 	if err := os.WriteFile(configPath, config, 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -42,8 +47,12 @@ steps:
 		t.Fatalf("load config: %v", err)
 	}
 
-	if cfg.Defaults.Task.Traits["mr"] != "required" {
-		t.Fatalf("mr trait = %q", cfg.Defaults.Task.Traits["mr"])
+	if cfg.Defaults.Task.Vars["kind"] != "feature" {
+		t.Fatalf("task kind var = %q", cfg.Defaults.Task.Vars["kind"])
+	}
+
+	if len(cfg.Workflow.Task.Statuses) != 6 {
+		t.Fatalf("task workflow statuses = %d, want 6", len(cfg.Workflow.Task.Statuses))
 	}
 }
 
@@ -91,14 +100,12 @@ func TestStoreScaffoldTaskCreatesTaskSessionAndArtifactsDirs(t *testing.T) {
 	}
 
 	task := model.TaskState{
-		Version:  1,
-		Slug:     "cloud-api-auth",
-		Project:  "user-permissions",
-		Repo:     "cloud",
-		Status:   model.TaskStatusActive,
-		Session:  model.TaskSessionState{Active: "S-001"},
-		MR:       model.TaskMRState{Status: model.MRStatusMissing},
-		Worktree: model.TaskWorktreeState{Status: model.WorktreeStatusMissing},
+		Version: 1,
+		Slug:    "cloud-api-auth",
+		Project: "user-permissions",
+		Status:  model.TaskStatus("active"),
+		Vars:    map[string]string{"kind": "feature"},
+		Session: model.TaskSessionState{Active: "S-001"},
 	}
 
 	if err := store.ScaffoldTask(task); err != nil {
@@ -124,5 +131,47 @@ func TestStoreScaffoldTaskCreatesTaskSessionAndArtifactsDirs(t *testing.T) {
 
 	if loaded.Project != "user-permissions" {
 		t.Fatalf("loaded project = %q", loaded.Project)
+	}
+
+	for _, path := range []string{
+		filepath.Join(taskDir, "artifacts", "repository.yaml"),
+		filepath.Join(taskDir, "artifacts", "branch.yaml"),
+		filepath.Join(taskDir, "artifacts", "worktree.yaml"),
+		filepath.Join(taskDir, "artifacts", "mr.yaml"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("did not expect scaffold artifact file %s", path)
+		}
+	}
+}
+
+func TestStoreArtifactsRemainOpaqueJSONMaps(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+
+	if err := store.ScaffoldProject(model.ProjectState{Version: 1, Slug: "user-permissions", Status: model.ProjectStatusActive}); err != nil {
+		t.Fatalf("scaffold project: %v", err)
+	}
+	if err := store.ScaffoldTask(model.TaskState{Version: 1, Slug: "api-auth", Project: "user-permissions", Status: model.TaskStatus("todo")}); err != nil {
+		t.Fatalf("scaffold task: %v", err)
+	}
+
+	if err := store.SaveArtifact("user-permissions", "api-auth", "summary", map[string]any{"state": "ready", "attempts": 2, "ok": true}); err != nil {
+		t.Fatalf("save artifact: %v", err)
+	}
+
+	artifact, err := store.LoadArtifact("user-permissions", "api-auth", "summary")
+	if err != nil {
+		t.Fatalf("load artifact: %v", err)
+	}
+
+	if artifact.Data["state"] != "ready" {
+		t.Fatalf("state = %#v", artifact.Data["state"])
+	}
+	if artifact.Data["attempts"] != 2 {
+		t.Fatalf("attempts = %#v", artifact.Data["attempts"])
+	}
+	if artifact.Data["ok"] != true {
+		t.Fatalf("ok = %#v", artifact.Data["ok"])
 	}
 }
