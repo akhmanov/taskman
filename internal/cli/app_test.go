@@ -19,13 +19,13 @@ func TestBuildAppHelpListsPrimaryResources(t *testing.T) {
 	}
 
 	help := stdout.String()
-	for _, want := range []string{"projects", "tasks", "doctor"} {
+	for _, want := range []string{"project", "task", "doctor"} {
 		if !bytes.Contains([]byte(help), []byte(want)) {
 			t.Fatalf("help missing %q: %s", want, help)
 		}
 	}
 
-	for _, want := range []string{"get", "create", "describe", "archive", "transition"} {
+	for _, want := range []string{"list", "add", "show", "archive", "start", "complete", "close"} {
 		if !bytes.Contains([]byte(help), []byte(want)) {
 			t.Fatalf("help missing nested verb %q: %s", want, help)
 		}

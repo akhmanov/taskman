@@ -89,6 +89,13 @@ func (s TaskService) AddEvent(projectSlug, taskSlug string, event model.PayloadE
 	if err := validatePayloadEvent(event); err != nil {
 		return err
 	}
+	existing, err := s.store.ListTaskEvents(projectSlug, taskSlug)
+	if err != nil {
+		return err
+	}
+	if hasEventID(existing, event.ID) {
+		return fmt.Errorf("event id %q already exists", event.ID)
+	}
 	return s.store.AppendTaskEvent(projectSlug, taskSlug, event)
 }
 
@@ -341,21 +348,47 @@ func applyFailedOperation(task *model.TaskState, cmd string, result steps.PhaseR
 		message = result.Steps[len(result.Steps)-1].Result.Message
 	}
 	task.LastOp = model.OperationState{
-		Cmd:   cmd,
-		OK:    false,
-		Step:  result.FailedStep,
-		Error: message,
-		At:    now().UTC().Format(time.RFC3339),
+		Cmd:      cmd,
+		OK:       false,
+		Step:     result.FailedStep,
+		Steps:    executedStepNames(result),
+		Message:  message,
+		Warnings: collectedWarnings(result),
+		Error:    message,
+		At:       now().UTC().Format(time.RFC3339),
 	}
 }
 
 func applySucceededOperation(task *model.TaskState, cmd string, result steps.PhaseResult, now func() time.Time) {
 	task.LastOp = model.OperationState{
-		Cmd: cmd,
-		OK:  true,
-		At:  now().UTC().Format(time.RFC3339),
+		Cmd:      cmd,
+		OK:       true,
+		Steps:    executedStepNames(result),
+		Warnings: collectedWarnings(result),
+		At:       now().UTC().Format(time.RFC3339),
 	}
 	if len(result.Steps) > 0 {
-		task.LastOp.Step = result.Steps[len(result.Steps)-1].Name
+		lastStep := result.Steps[len(result.Steps)-1]
+		task.LastOp.Step = lastStep.Name
+		task.LastOp.Message = lastStep.Result.Message
 	}
+}
+
+func executedStepNames(result steps.PhaseResult) []string {
+	if len(result.Steps) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(result.Steps))
+	for _, step := range result.Steps {
+		names = append(names, step.Name)
+	}
+	return names
+}
+
+func collectedWarnings(result steps.PhaseResult) []string {
+	var warnings []string
+	for _, step := range result.Steps {
+		warnings = append(warnings, step.Result.Warnings...)
+	}
+	return warnings
 }

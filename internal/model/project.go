@@ -28,9 +28,12 @@ type ArchiveState struct {
 }
 
 type OperationState struct {
-	Cmd   string `json:"cmd,omitempty" yaml:"cmd,omitempty"`
-	OK    bool   `json:"ok" yaml:"ok"`
-	Step  string `json:"step,omitempty" yaml:"step,omitempty"`
-	Error string `json:"error,omitempty" yaml:"error,omitempty"`
-	At    string `json:"at,omitempty" yaml:"at,omitempty"`
+	Cmd      string   `json:"cmd,omitempty" yaml:"cmd,omitempty"`
+	OK       bool     `json:"ok" yaml:"ok"`
+	Step     string   `json:"step,omitempty" yaml:"step,omitempty"`
+	Steps    []string `json:"steps,omitempty" yaml:"steps,omitempty"`
+	Message  string   `json:"message,omitempty" yaml:"message,omitempty"`
+	Warnings []string `json:"warnings,omitempty" yaml:"warnings,omitempty"`
+	Error    string   `json:"error,omitempty" yaml:"error,omitempty"`
+	At       string   `json:"at,omitempty" yaml:"at,omitempty"`
 }
