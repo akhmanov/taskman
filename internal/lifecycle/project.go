@@ -2,7 +2,6 @@ package lifecycle
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -21,44 +20,47 @@ func NewProjectService(s store.Store, runner steps.Runner) ProjectService {
 	return ProjectService{store: s, runner: runner, now: time.Now}
 }
 
-func (s ProjectService) Update(slug string, labels []string, vars map[string]string, unsetVars []string) (model.ProjectState, error) {
+func (s ProjectService) Create(slug string, labels []string, vars map[string]string) (model.ProjectState, error) {
 	cfg, err := s.store.LoadConfig()
 	if err != nil {
 		return model.ProjectState{}, err
 	}
-	if err := cfg.ValidateVarOverrides("project", vars); err != nil {
+	now := s.now().UTC().Format(time.RFC3339)
+	project := model.ProjectState{
+		Slug:      slug,
+		Status:    model.StatusBacklog,
+		Labels:    append(append([]string{}, cfg.Defaults.Project.Labels...), labels...),
+		Vars:      model.MergeVars(cfg.Defaults.Project.Vars, vars),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.store.ScaffoldProject(project); err != nil {
 		return model.ProjectState{}, err
 	}
+	return project, nil
+}
 
+func (s ProjectService) Update(slug string, labels []string, vars map[string]string, unsetVars []string) (model.ProjectState, error) {
 	project, err := s.store.LoadProject(slug)
 	if err != nil {
 		return model.ProjectState{}, err
 	}
-
 	if labels != nil {
 		project.Labels = append([]string{}, labels...)
 	}
-	if len(unsetVars) > 0 {
-		if project.Vars == nil {
-			project.Vars = map[string]string{}
-		}
-		for _, key := range unsetVars {
-			delete(project.Vars, key)
-		}
+	if project.Vars == nil {
+		project.Vars = map[string]string{}
+	}
+	for _, key := range unsetVars {
+		delete(project.Vars, key)
 	}
 	if vars != nil {
 		project.Vars = model.MergeVars(project.Vars, vars)
 	}
-	if err := cfg.ValidateRequiredVars("project", project.Vars); err != nil {
-		return model.ProjectState{}, err
-	}
-
 	project.UpdatedAt = s.now().UTC().Format(time.RFC3339)
-	project.LastOp = model.OperationState{Cmd: "projects.update", OK: true, At: project.UpdatedAt}
 	if err := s.store.SaveProject(project); err != nil {
 		return model.ProjectState{}, err
 	}
-
 	return project, nil
 }
 
@@ -103,63 +105,35 @@ func (s ProjectService) GetEvents(slug string) ([]model.PayloadEvent, error) {
 	return s.store.ListProjectEvents(slug)
 }
 
-func (s ProjectService) Create(slug string, labels []string, vars map[string]string) (model.ProjectState, error) {
-	cfg, err := s.store.LoadConfig()
-	if err != nil {
-		return model.ProjectState{}, err
-	}
-	if err := cfg.ValidateVarOverrides("project", vars); err != nil {
-		return model.ProjectState{}, err
-	}
-
-	mergedVars := model.MergeVars(cfg.Defaults.Project.Vars, vars)
-	if err := cfg.ValidateRequiredVars("project", mergedVars); err != nil {
-		return model.ProjectState{}, err
-	}
-
-	now := s.now().UTC().Format(time.RFC3339)
-	project := model.ProjectState{
-		Version:   1,
-		Slug:      slug,
-		Status:    model.ProjectStatusActive,
-		Labels:    append([]string{}, append(cfg.Defaults.Project.Labels, labels...)...),
-		Vars:      mergedVars,
-		CreatedAt: now,
-		UpdatedAt: now,
-		Tasks:     model.TaskCounts{},
-		Archive:   model.ArchiveState{Ready: false},
-		LastOp:    model.OperationState{Cmd: "projects.create", OK: true, At: now},
-	}
-
-	if err := s.store.ScaffoldProject(project); err != nil {
-		return model.ProjectState{}, err
-	}
-
-	return project, nil
-}
-
-func (s ProjectService) Archive(slug string) (model.ProjectState, error) {
-	cfg, err := s.store.LoadConfig()
-	if err != nil {
-		return model.ProjectState{}, err
-	}
-
+func (s ProjectService) Transition(slug, verb string, input TransitionInput) (model.ProjectState, []string, error) {
 	project, err := s.store.LoadProject(slug)
 	if err != nil {
-		return model.ProjectState{}, err
+		return model.ProjectState{}, nil, err
 	}
-
-	project.Archive = s.evaluateArchiveState(slug, cfg.Workflow.Task.TerminalStatuses)
-	project.UpdatedAt = s.now().UTC().Format(time.RFC3339)
-	if err := s.store.SaveProject(project); err != nil {
-		return model.ProjectState{}, err
+	spec, err := validateTransitionAllowed(project.Status, verb)
+	if err != nil {
+		return model.ProjectState{}, nil, err
 	}
-
-	if !project.Archive.Ready {
-		return project, errors.New("project is not ready to archive")
+	if verb == "complete" {
+		tasks, err := s.store.ListTasks(slug)
+		if err != nil {
+			return model.ProjectState{}, nil, err
+		}
+		for _, task := range tasks {
+			if !model.IsTerminalStatus(task.Status) {
+				return model.ProjectState{}, nil, fmt.Errorf("project can be done only when all tasks are done or canceled")
+			}
+		}
 	}
-
-	result, err := s.runner.Run(context.Background(), "archive", cfg.Workflow.Project.Archive.Steps, steps.Context{
+	detail, err := buildStatusDetail(spec.To, input)
+	if err != nil {
+		return model.ProjectState{}, nil, err
+	}
+	cfg, err := s.store.LoadConfig()
+	if err != nil {
+		return model.ProjectState{}, nil, err
+	}
+	contextPayload := steps.Context{
 		RuntimeRoot: s.store.Root(),
 		Project: steps.ProjectContext{
 			Slug:   project.Slug,
@@ -167,49 +141,40 @@ func (s ProjectService) Archive(slug string) (model.ProjectState, error) {
 			Labels: project.Labels,
 			Vars:   project.Vars,
 		},
-		Transition: "archive",
-	})
+		Transition: verb,
+	}
+	preResult, err := s.runner.Run(context.Background(), verb, cfg.MiddlewareFor("project", verb).Pre, contextPayload)
 	if err != nil {
-		return model.ProjectState{}, err
+		return model.ProjectState{}, nil, err
 	}
-	if !result.OK {
-		project.LastOp = model.OperationState{Cmd: "projects.archive", OK: false, Step: result.FailedStep, At: s.now().UTC().Format(time.RFC3339)}
-		if len(result.Steps) > 0 {
-			project.LastOp.Error = result.Steps[len(result.Steps)-1].Result.Message
-		}
-		_ = s.store.SaveProject(project)
-		return project, errors.New(project.LastOp.Error)
+	if !preResult.OK {
+		return model.ProjectState{}, nil, fmt.Errorf(lastResultMessage(preResult))
 	}
-
-	project.Status = model.ProjectStatusArchived
+	previous := project.Status
+	project.Status = spec.To
+	project.StatusDetail = detail
 	project.UpdatedAt = s.now().UTC().Format(time.RFC3339)
-	project.LastOp = model.OperationState{Cmd: "projects.archive", OK: true, At: project.UpdatedAt}
-	if err := s.store.ArchiveProject(project, s.now().UTC().Year()); err != nil {
-		return model.ProjectState{}, err
-	}
-	return project, nil
-}
-
-func (s ProjectService) evaluateArchiveState(projectSlug string, terminalStatuses []model.TaskStatus) model.ArchiveState {
-	tasks, err := s.store.ListTasks(projectSlug)
+	contextPayload.Project.Status = string(project.Status)
+	postResult, err := s.runner.Run(context.Background(), verb, cfg.MiddlewareFor("project", verb).Post, contextPayload)
+	warnings := collectWarnings(preResult)
+	facts := collectFacts(preResult)
+	artifacts := collectArtifacts(preResult)
 	if err != nil {
-		return model.ArchiveState{Ready: false, Blockers: []string{err.Error()}}
-	}
-
-	allowed := map[model.TaskStatus]struct{}{}
-	for _, status := range terminalStatuses {
-		allowed[status] = struct{}{}
-	}
-
-	blockers := make([]string, 0)
-	for _, task := range tasks {
-		if _, ok := allowed[task.Status]; !ok {
-			blockers = append(blockers, fmt.Sprintf("task %s is not terminal", task.Slug))
+		warnings = append(warnings, err.Error())
+	} else {
+		warnings = append(warnings, collectWarnings(postResult)...)
+		if !postResult.OK {
+			warnings = append(warnings, lastResultMessage(postResult))
 		}
+		mergeFacts(facts, collectFacts(postResult))
+		mergeArtifacts(artifacts, collectArtifacts(postResult))
 	}
-
-	return model.ArchiveState{
-		Ready:    len(blockers) == 0,
-		Blockers: blockers,
+	if err := s.store.SaveProject(project); err != nil {
+		return model.ProjectState{}, nil, err
 	}
+	record := transitionRecord(project.UpdatedAt, input.Actor, verb, previous, spec.To, input, warnings, facts, artifacts)
+	if err := s.store.AppendProjectTransition(slug, record); err != nil {
+		return model.ProjectState{}, nil, err
+	}
+	return project, warnings, nil
 }

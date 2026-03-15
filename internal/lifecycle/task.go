@@ -2,11 +2,8 @@ package lifecycle
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
-	"text/template"
 	"time"
 
 	"github.com/akhmanov/taskman/internal/model"
@@ -24,44 +21,55 @@ func NewTaskService(s store.Store, runner steps.Runner) TaskService {
 	return TaskService{store: s, runner: runner, now: time.Now}
 }
 
-func (s TaskService) Update(projectSlug, taskSlug string, labels []string, vars map[string]string, unsetVars []string) (model.TaskState, error) {
+func (s TaskService) Create(projectSlug, slug string, labels []string, vars map[string]string) (model.TaskState, error) {
+	project, err := s.store.LoadProject(projectSlug)
+	if err != nil {
+		return model.TaskState{}, err
+	}
+	if model.IsTerminalStatus(project.Status) {
+		return model.TaskState{}, fmt.Errorf("Can't add task %s to project %s because the project is %s.", slug, projectSlug, project.Status)
+	}
 	cfg, err := s.store.LoadConfig()
 	if err != nil {
 		return model.TaskState{}, err
 	}
-	if err := cfg.ValidateVarOverrides("task", vars); err != nil {
+	now := s.now().UTC().Format(time.RFC3339)
+	task := model.TaskState{
+		Slug:      slug,
+		Project:   projectSlug,
+		Status:    model.StatusBacklog,
+		Labels:    append(append([]string{}, cfg.Defaults.Task.Labels...), labels...),
+		Vars:      model.MergeVars(cfg.Defaults.Task.Vars, vars),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.store.ScaffoldTask(task); err != nil {
 		return model.TaskState{}, err
 	}
+	return task, nil
+}
 
+func (s TaskService) Update(projectSlug, taskSlug string, labels []string, vars map[string]string, unsetVars []string) (model.TaskState, error) {
 	task, err := s.store.LoadTask(projectSlug, taskSlug)
 	if err != nil {
 		return model.TaskState{}, err
 	}
-
 	if labels != nil {
 		task.Labels = append([]string{}, labels...)
 	}
-	if len(unsetVars) > 0 {
-		if task.Vars == nil {
-			task.Vars = map[string]string{}
-		}
-		for _, key := range unsetVars {
-			delete(task.Vars, key)
-		}
+	if task.Vars == nil {
+		task.Vars = map[string]string{}
+	}
+	for _, key := range unsetVars {
+		delete(task.Vars, key)
 	}
 	if vars != nil {
 		task.Vars = model.MergeVars(task.Vars, vars)
 	}
-	if err := cfg.ValidateRequiredVars("task", task.Vars); err != nil {
-		return model.TaskState{}, err
-	}
-
 	task.UpdatedAt = s.now().UTC().Format(time.RFC3339)
-	task.LastOp = model.OperationState{Cmd: "tasks.update", OK: true, At: task.UpdatedAt}
 	if err := s.store.SaveTask(task); err != nil {
 		return model.TaskState{}, err
 	}
-
 	return task, nil
 }
 
@@ -106,151 +114,79 @@ func (s TaskService) GetEvents(projectSlug, taskSlug string) ([]model.PayloadEve
 	return s.store.ListTaskEvents(projectSlug, taskSlug)
 }
 
-func (s TaskService) Create(projectSlug, name string, labels []string, vars map[string]string) (model.TaskState, error) {
-	cfg, err := s.store.LoadConfig()
-	if err != nil {
-		return model.TaskState{}, err
-	}
-	if _, err := s.store.LoadProject(projectSlug); err != nil {
-		return model.TaskState{}, err
-	}
-	if err := cfg.ValidateVarOverrides("task", vars); err != nil {
-		return model.TaskState{}, err
-	}
-
-	mergedVars := model.MergeVars(cfg.Defaults.Task.Vars, vars)
-	if err := cfg.ValidateRequiredVars("task", mergedVars); err != nil {
-		return model.TaskState{}, err
-	}
-
-	slug, err := renderTaskSlug(cfg.Naming.TaskSlug, projectSlug, name, mergedVars)
-	if err != nil {
-		return model.TaskState{}, err
-	}
-
-	now := s.now().UTC().Format(time.RFC3339)
-	task := model.TaskState{
-		Version:   1,
-		Slug:      slug,
-		Project:   projectSlug,
-		Status:    cfg.Workflow.Task.InitialStatus,
-		Labels:    append([]string{}, append(cfg.Defaults.Task.Labels, labels...)...),
-		Vars:      mergedVars,
-		CreatedAt: now,
-		UpdatedAt: now,
-		Session:   model.TaskSessionState{Active: "S-001"},
-		LastOp:    model.OperationState{Cmd: "tasks.create", OK: true, At: now},
-	}
-
-	if err := s.store.ScaffoldTask(task); err != nil {
-		return model.TaskState{}, err
-	}
-
-	session := model.SessionState{
-		Version:   1,
-		ID:        "S-001",
-		Task:      task.Slug,
-		Status:    string(task.Status),
-		CreatedAt: now,
-		UpdatedAt: now,
-		LastOp:    task.LastOp,
-	}
-	if err := s.store.SaveSession(projectSlug, slug, session); err != nil {
-		return model.TaskState{}, err
-	}
-
-	if err := s.refreshProjectCounts(projectSlug); err != nil {
-		return model.TaskState{}, err
-	}
-
-	return task, nil
-}
-
-func (s TaskService) Transition(projectSlug, taskSlug, transitionName string) (model.TaskState, error) {
-	cfg, err := s.store.LoadConfig()
-	if err != nil {
-		return model.TaskState{}, err
-	}
-
+func (s TaskService) Transition(projectSlug, taskSlug, verb string, input TransitionInput) (model.TaskState, []string, error) {
 	task, err := s.store.LoadTask(projectSlug, taskSlug)
 	if err != nil {
-		return model.TaskState{}, err
+		return model.TaskState{}, nil, err
 	}
 	project, err := s.store.LoadProject(projectSlug)
 	if err != nil {
-		return model.TaskState{}, err
+		return model.TaskState{}, nil, err
 	}
-
-	transition, ok := cfg.Workflow.Task.Transitions[transitionName]
-	if !ok {
-		return task, fmt.Errorf("task transition %q is not declared", transitionName)
+	if model.IsTerminalStatus(project.Status) && verb != "cancel" && verb != "reopen" {
+		return model.TaskState{}, nil, fmt.Errorf("Can't %s task %s/%s because project %s is %s.", verb, projectSlug, taskSlug, projectSlug, project.Status)
 	}
-	if !statusAllowed(task.Status, transition.From) {
-		return task, fmt.Errorf("task transition %q is not allowed from status %q", transitionName, task.Status)
+	if (verb == "start" || verb == "resume") && project.Status == model.StatusBacklog {
+		return model.TaskState{}, nil, fmt.Errorf("Can't %s task %s/%s while project %s is still backlog. Move the project to planned or in_progress first.", verb, projectSlug, taskSlug, projectSlug)
 	}
-	for _, required := range transition.Requires {
-		if task.Vars[required] == "" {
-			return task, fmt.Errorf("task transition %q requires task var %q", transitionName, required)
-		}
-	}
-
-	stepInput, err := s.stepContext(project, task, transitionName)
+	spec, err := validateTransitionAllowed(task.Status, verb)
 	if err != nil {
-		return model.TaskState{}, err
+		return model.TaskState{}, nil, err
 	}
-	result, err := s.runner.Run(context.Background(), transitionName, transition.Steps, stepInput)
+	detail, err := buildStatusDetail(spec.To, input)
 	if err != nil {
-		return model.TaskState{}, err
+		return model.TaskState{}, nil, err
 	}
-	s.syncArtifacts(&task, result)
-
-	if !result.OK {
-		applyFailedOperation(&task, "tasks.transition", result, s.now)
-		task.UpdatedAt = s.now().UTC().Format(time.RFC3339)
-		if saveErr := s.store.SaveTask(task); saveErr != nil {
-			return model.TaskState{}, saveErr
-		}
-		return task, errors.New(task.LastOp.Error)
+	cfg, err := s.store.LoadConfig()
+	if err != nil {
+		return model.TaskState{}, nil, err
 	}
-
-	task.Status = transition.To
+	contextPayload, err := s.stepContext(project, task, verb)
+	if err != nil {
+		return model.TaskState{}, nil, err
+	}
+	preResult, err := s.runner.Run(context.Background(), verb, cfg.MiddlewareFor("task", verb).Pre, contextPayload)
+	if err != nil {
+		return model.TaskState{}, nil, err
+	}
+	if !preResult.OK {
+		return model.TaskState{}, nil, fmt.Errorf(lastResultMessage(preResult))
+	}
+	previous := task.Status
+	task.Status = spec.To
+	task.StatusDetail = detail
 	task.UpdatedAt = s.now().UTC().Format(time.RFC3339)
-	applySucceededOperation(&task, "tasks.transition", result, s.now)
-	if cfg.Workflow.Task.IsTerminal(task.Status) {
-		s.completeSession(projectSlug, taskSlug, &task)
+	contextPayload, err = s.stepContext(project, task, verb)
+	if err != nil {
+		return model.TaskState{}, nil, err
+	}
+	postResult, err := s.runner.Run(context.Background(), verb, cfg.MiddlewareFor("task", verb).Post, contextPayload)
+	warnings := collectWarnings(preResult)
+	facts := collectFacts(preResult)
+	artifacts := collectArtifacts(preResult)
+	if err != nil {
+		warnings = append(warnings, err.Error())
 	} else {
-		s.syncActiveSession(projectSlug, taskSlug, task.Status)
+		warnings = append(warnings, collectWarnings(postResult)...)
+		if !postResult.OK {
+			warnings = append(warnings, lastResultMessage(postResult))
+		}
+		mergeFacts(facts, collectFacts(postResult))
+		mergeArtifacts(artifacts, collectArtifacts(postResult))
+	}
+	for kind, data := range artifacts {
+		if saveErr := s.store.SaveArtifact(projectSlug, taskSlug, kind, data); saveErr != nil {
+			warnings = append(warnings, saveErr.Error())
+		}
 	}
 	if err := s.store.SaveTask(task); err != nil {
-		return model.TaskState{}, err
+		return model.TaskState{}, nil, err
 	}
-	if err := s.refreshProjectCounts(projectSlug); err != nil {
-		return model.TaskState{}, err
+	record := transitionRecord(task.UpdatedAt, input.Actor, verb, previous, spec.To, input, warnings, facts, artifacts)
+	if err := s.store.AppendTaskTransition(projectSlug, taskSlug, record); err != nil {
+		return model.TaskState{}, nil, err
 	}
-
-	return task, nil
-}
-
-func renderTaskSlug(pattern, projectSlug, name string, vars map[string]string) (string, error) {
-	if pattern == "" {
-		return name, nil
-	}
-
-	tmpl, err := template.New("task_slug").Option("missingkey=error").Parse(pattern)
-	if err != nil {
-		return "", err
-	}
-
-	var builder strings.Builder
-	if err := tmpl.Execute(&builder, map[string]any{
-		"name":    name,
-		"project": map[string]string{"slug": projectSlug},
-		"vars":    vars,
-	}); err != nil {
-		return "", err
-	}
-
-	return builder.String(), nil
+	return task, warnings, nil
 }
 
 func (s TaskService) stepContext(project model.ProjectState, task model.TaskState, transition string) (steps.Context, error) {
@@ -258,7 +194,7 @@ func (s TaskService) stepContext(project model.ProjectState, task model.TaskStat
 	if err != nil {
 		return steps.Context{}, err
 	}
-	taskDir := filepath.Join(s.store.Root(), "projects", "active", task.Project, "tasks", task.Slug)
+	taskDir := filepath.Join(s.store.Root(), "projects", task.Project, "tasks", task.Slug)
 	return steps.Context{
 		RuntimeRoot: s.store.Root(),
 		Project: steps.ProjectContext{
@@ -278,117 +214,4 @@ func (s TaskService) stepContext(project model.ProjectState, task model.TaskStat
 		Artifacts:    artifacts,
 		Transition:   transition,
 	}, nil
-}
-
-func (s TaskService) syncArtifacts(task *model.TaskState, result steps.PhaseResult) {
-	for _, exec := range result.Steps {
-		for kind, data := range exec.Result.Artifacts {
-			_ = s.store.SaveArtifact(task.Project, task.Slug, kind, data)
-		}
-	}
-}
-
-func (s TaskService) completeSession(projectSlug, taskSlug string, task *model.TaskState) {
-	activeSession := task.Session.Active
-	task.Session.Active = ""
-	if activeSession == "" {
-		return
-	}
-	task.Session.LastCompleted = &activeSession
-	if session, loadErr := s.store.LoadSession(projectSlug, taskSlug, activeSession); loadErr == nil {
-		session.Status = string(task.Status)
-		session.UpdatedAt = s.now().UTC().Format(time.RFC3339)
-		session.LastOp = task.LastOp
-		_ = s.store.SaveSession(projectSlug, taskSlug, session)
-	}
-}
-
-func (s TaskService) syncActiveSession(projectSlug, taskSlug string, status model.TaskStatus) {
-	task, err := s.store.LoadTask(projectSlug, taskSlug)
-	if err != nil || task.Session.Active == "" {
-		return
-	}
-	if session, loadErr := s.store.LoadSession(projectSlug, taskSlug, task.Session.Active); loadErr == nil {
-		session.Status = string(status)
-		session.UpdatedAt = s.now().UTC().Format(time.RFC3339)
-		_ = s.store.SaveSession(projectSlug, taskSlug, session)
-	}
-}
-
-func (s TaskService) refreshProjectCounts(projectSlug string) error {
-	project, err := s.store.LoadProject(projectSlug)
-	if err != nil {
-		return err
-	}
-	tasks, err := s.store.ListTasks(projectSlug)
-	if err != nil {
-		return err
-	}
-	counts := model.TaskCounts{}
-	for _, task := range tasks {
-		counts[string(task.Status)]++
-	}
-	project.Tasks = counts
-	project.UpdatedAt = s.now().UTC().Format(time.RFC3339)
-	return s.store.SaveProject(project)
-}
-
-func statusAllowed(current model.TaskStatus, allowed []model.TaskStatus) bool {
-	for _, status := range allowed {
-		if current == status {
-			return true
-		}
-	}
-	return false
-}
-
-func applyFailedOperation(task *model.TaskState, cmd string, result steps.PhaseResult, now func() time.Time) {
-	message := "step execution failed"
-	if len(result.Steps) > 0 {
-		message = result.Steps[len(result.Steps)-1].Result.Message
-	}
-	task.LastOp = model.OperationState{
-		Cmd:      cmd,
-		OK:       false,
-		Step:     result.FailedStep,
-		Steps:    executedStepNames(result),
-		Message:  message,
-		Warnings: collectedWarnings(result),
-		Error:    message,
-		At:       now().UTC().Format(time.RFC3339),
-	}
-}
-
-func applySucceededOperation(task *model.TaskState, cmd string, result steps.PhaseResult, now func() time.Time) {
-	task.LastOp = model.OperationState{
-		Cmd:      cmd,
-		OK:       true,
-		Steps:    executedStepNames(result),
-		Warnings: collectedWarnings(result),
-		At:       now().UTC().Format(time.RFC3339),
-	}
-	if len(result.Steps) > 0 {
-		lastStep := result.Steps[len(result.Steps)-1]
-		task.LastOp.Step = lastStep.Name
-		task.LastOp.Message = lastStep.Result.Message
-	}
-}
-
-func executedStepNames(result steps.PhaseResult) []string {
-	if len(result.Steps) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(result.Steps))
-	for _, step := range result.Steps {
-		names = append(names, step.Name)
-	}
-	return names
-}
-
-func collectedWarnings(result steps.PhaseResult) []string {
-	var warnings []string
-	for _, step := range result.Steps {
-		warnings = append(warnings, step.Result.Warnings...)
-	}
-	return warnings
 }

@@ -1,15 +1,15 @@
 # taskman
 
-`taskman` is a Go CLI engine for task/project lifecycle management.
+`taskman` is an opinionated Go CLI for agent-first project and task workflow management.
 
-It owns:
-- runtime structure validation;
-- config-driven task transitions;
-- YAML state reads and writes;
-- explicit transition execution for tasks and archive execution for projects;
-- resource-first CLI commands built on `urfave/cli`.
+The product contract is built in:
+- fixed statuses for both `project` and `task`: `backlog`, `planned`, `in_progress`, `paused`, `done`, `canceled`;
+- fixed transition verbs;
+- flat `list` views for scanning;
+- grouped `show` views for operational work;
+- append-only transition history kept separate from narrative events.
 
-It does not treat `tasks/` as code. The sibling `tasks/` repository is the runtime instance root.
+`taskman` does not use a workflow DSL. `taskman.yaml` is only for runtime defaults and pre/post middleware.
 
 ## Runtime root
 
@@ -19,11 +19,11 @@ Runtime root precedence is:
 2. `TASKMAN_ROOT`
 3. fallback `../tasks`
 
-Override it with:
+Examples:
 
 ```bash
-taskman --root /path/to/tasks project list
-TASKMAN_ROOT=/path/to/tasks taskman doctor
+taskman --root /path/to/runtime init
+TASKMAN_ROOT=/path/to/runtime taskman project list
 ```
 
 ## Install
@@ -32,82 +32,84 @@ TASKMAN_ROOT=/path/to/tasks taskman doctor
 go install github.com/akhmanov/taskman@latest
 ```
 
+## Initialize a runtime
+
+Create a minimal `taskman.yaml`:
+
+```bash
+taskman --root /path/to/runtime init
+```
+
+This writes only `taskman.yaml`. Projects and tasks create their own directories lazily.
+
 ## Command shape
 
 ```bash
 taskman project list
-taskman project show <project> --view raw|agent
+taskman project show <project> --all
 taskman project add <project>
 taskman project update <project> --var k=v --unset-var k
-taskman project brief show <project>
-taskman project brief set <project> --content "..."
-taskman project brief set <project> --file ./project-brief.md
-taskman project brief set <project> --file -
-taskman project brief edit <project>
-taskman project brief init <project> --force
-taskman project event add <project> --id EVT-001 --at 2026-03-14T10:00:00Z --type decision --summary "..." --actor taskman
-taskman project event list <project> --type decision --active-only
-taskman project archive <project>
+taskman project plan <project>
+taskman project start <project>
+taskman project pause <project> --reason-type external_blocker --reason "..." --resume-when "..."
+taskman project resume <project>
+taskman project complete <project> --summary "..."
+taskman project cancel <project> --reason-type deprioritized --reason "..."
+taskman project reopen <project>
 
-taskman task list -p <project> --status <status>
-taskman task show <task> -p <project> --view raw|agent
+taskman task list -p <project> --active
+taskman task list -p <project> --status paused,done
+taskman task list -p <project> --exclude-status done,canceled
+taskman task show <task> -p <project>
 taskman task add <task> -p <project>
 taskman task update <task> -p <project> --var k=v --unset-var k
-taskman task brief show <task> -p <project>
-taskman task brief set <task> -p <project> --content "..."
-taskman task brief set <task> -p <project> --file ./task-brief.md
-taskman task brief set <task> -p <project> --file -
-taskman task brief edit <task> -p <project>
-taskman task brief init <task> -p <project> --force
-taskman task event add <task> -p <project> --id EVT-001 --at 2026-03-14T10:00:00Z --type note --summary "..." --actor taskman
-taskman task event list <task> -p <project> --type blocker --active-only
+taskman task plan <task> -p <project>
 taskman task start <task> -p <project>
-taskman task complete <task> -p <project>
-taskman task close <task> -p <project>
-
-taskman doctor
+taskman task pause <task> -p <project> --reason-type waiting_feedback --reason "..." --resume-when "..."
+taskman task resume <task> -p <project>
+taskman task complete <task> -p <project> --summary "..."
+taskman task cancel <task> -p <project> --reason-type deprioritized --reason "..."
+taskman task reopen <task> -p <project>
 ```
 
-The resource-first singular form above is the only supported public CLI.
+The singular resource-first form above is the public CLI.
 
-## Metadata flags
+## Metadata
 
-Creation commands accept repeatable metadata flags:
+Creation and update commands support repeatable metadata flags:
 
 ```bash
-taskman project add user-permissions --label auth --var area=product
-taskman task add api-auth -p user-permissions --label backend --var repo=cloud --var kind=feature
+taskman project add user-permissions --label auth --var repo=cloud
+taskman task add api-auth -p user-permissions --label backend --var branch=feature/api-auth
 ```
 
-- `labels` are for filtering and human grouping.
-- `vars` are workflow inputs interpreted by the runtime config and external helpers.
-- `task add` is side-effect free; automation runs only on explicit transitions.
+- `labels` are for filtering and grouping.
+- `vars` are runtime metadata that middleware can inspect.
 
-## Memory Layer
+## Storage model
 
-`taskman` separates machine state from durable agent-facing context:
+`taskman` keeps current state and history separate:
 
-- `state.yaml` keeps canonical machine-oriented state.
-- `brief.md` stores current truth for a project or task.
-- `events.yaml` stores typed append-only history.
-- `show --view agent` renders a bounded short-memory view instead of raw persistence.
+- `state.yaml` — current snapshot
+- `brief.md` — current human/agent context
+- `transitions.yaml` — append-only transition audit log
+- `events.yaml` — append-only narrative events (notes, decisions, blockers, handoffs)
 
-For human editing, prefer `brief edit`.
-For automation and agents, prefer `brief set --file` or `brief set --file -`.
-Use `brief set --content` only for very small updates.
+There is no archive area. Terminal entities stay queryable through filters and views.
 
-## Help contract
+## Middleware model
 
-The CLI is expected to explain itself clearly through `-h` output.
+`taskman.yaml` can attach middleware to built-in transitions:
 
-Use:
+- `pre` middleware can block a transition
+- `post` middleware can emit warnings, facts, and artifacts
+- `post` middleware never rolls back an already-applied transition
 
-```bash
-taskman --help
-taskman project --help
-taskman task add --help
-taskman task start --help
-```
+## Views
+
+- `list` is flat and sorted by canonical status order, then `updated_at desc`
+- `project show` is the main grouped workboard
+- terminal task groups are collapsed by default in `project show`; use `--all` to expand them
 
 ## Development
 

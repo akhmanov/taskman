@@ -15,6 +15,7 @@ type Store struct {
 }
 
 const emptyEventsTemplate = "[]\n"
+const emptyTransitionsTemplate = "[]\n"
 
 func New(root string) Store {
 	return Store{root: root}
@@ -26,8 +27,11 @@ func (s Store) Root() string {
 
 func (s Store) LoadConfig() (model.Config, error) {
 	var cfg model.Config
-	err := readYAML(filepath.Join(s.root, "config.yaml"), &cfg)
+	err := readYAML(s.configPath(), &cfg)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return model.Config{}, fmt.Errorf("No taskman.yaml found in %s. Run `taskman --root %s init` first.", s.root, s.root)
+		}
 		return model.Config{}, err
 	}
 
@@ -38,23 +42,25 @@ func (s Store) LoadConfig() (model.Config, error) {
 	return cfg, nil
 }
 
-func (s Store) ScaffoldProject(project model.ProjectState) error {
-	if project.Slug == "" {
-		return fmt.Errorf("project slug is required")
-	}
-
-	projectDir := s.projectDir(project.Slug)
-	if err := os.MkdirAll(filepath.Join(projectDir, "tasks"), 0o755); err != nil {
+func (s Store) InitConfig() error {
+	if err := os.MkdirAll(s.root, 0o755); err != nil {
 		return err
 	}
+	return writeIfMissing(s.configPath(), []byte(model.DefaultConfigYAML))
+}
 
-	if err := writeIfMissing(filepath.Join(projectDir, "overview.md"), []byte("\n")); err != nil {
+func (s Store) ScaffoldProject(project model.ProjectState) error {
+	projectDir := s.projectDir(project.Slug)
+	if err := os.MkdirAll(filepath.Join(projectDir, "tasks"), 0o755); err != nil {
 		return err
 	}
 	if err := writeIfMissing(s.projectBriefPath(project.Slug), []byte(model.ProjectBriefTemplate)); err != nil {
 		return err
 	}
 	if err := writeIfMissing(s.projectEventsPath(project.Slug), []byte(emptyEventsTemplate)); err != nil {
+		return err
+	}
+	if err := writeIfMissing(s.projectTransitionsPath(project.Slug), []byte(emptyTransitionsTemplate)); err != nil {
 		return err
 	}
 
@@ -72,19 +78,8 @@ func (s Store) SaveProject(project model.ProjectState) error {
 }
 
 func (s Store) ScaffoldTask(task model.TaskState) error {
-	if task.Project == "" || task.Slug == "" {
-		return fmt.Errorf("task project and slug are required")
-	}
-
 	taskDir := s.taskDir(task.Project, task.Slug)
-	if err := os.MkdirAll(filepath.Join(taskDir, "sessions"), 0o755); err != nil {
-		return err
-	}
 	if err := os.MkdirAll(filepath.Join(taskDir, "artifacts"), 0o755); err != nil {
-		return err
-	}
-
-	if err := writeIfMissing(filepath.Join(taskDir, "overview.md"), []byte("\n")); err != nil {
 		return err
 	}
 	if err := writeIfMissing(s.taskBriefPath(task.Project, task.Slug), []byte(model.TaskBriefTemplate)); err != nil {
@@ -93,11 +88,8 @@ func (s Store) ScaffoldTask(task model.TaskState) error {
 	if err := writeIfMissing(s.taskEventsPath(task.Project, task.Slug), []byte(emptyEventsTemplate)); err != nil {
 		return err
 	}
-
-	if task.Session.Active != "" {
-		if err := os.MkdirAll(filepath.Join(taskDir, "sessions", task.Session.Active), 0o755); err != nil {
-			return err
-		}
+	if err := writeIfMissing(s.taskTransitionsPath(task.Project, task.Slug), []byte(emptyTransitionsTemplate)); err != nil {
+		return err
 	}
 
 	return writeYAML(filepath.Join(taskDir, "state.yaml"), task)
@@ -148,10 +140,6 @@ func (s Store) saveProjectEvents(slug string, events []model.PayloadEvent) error
 	return s.saveEvents(s.projectEventsPath(slug), events)
 }
 
-func (s Store) SaveSession(projectSlug, taskSlug string, session model.SessionState) error {
-	return writeYAML(filepath.Join(s.sessionDir(projectSlug, taskSlug, session.ID), "state.yaml"), session)
-}
-
 func (s Store) LoadTaskBrief(projectSlug, taskSlug string) (string, error) {
 	data, err := os.ReadFile(s.taskBriefPath(projectSlug, taskSlug))
 	if err != nil {
@@ -187,14 +175,8 @@ func (s Store) saveTaskEvents(projectSlug, taskSlug string, events []model.Paylo
 	return s.saveEvents(s.taskEventsPath(projectSlug, taskSlug), events)
 }
 
-func (s Store) LoadSession(projectSlug, taskSlug, sessionID string) (model.SessionState, error) {
-	var state model.SessionState
-	err := readYAML(filepath.Join(s.sessionDir(projectSlug, taskSlug, sessionID), "state.yaml"), &state)
-	return state, err
-}
-
 func (s Store) SaveArtifact(projectSlug, taskSlug, kind string, data map[string]any) error {
-	state := model.ArtifactState{Version: 1, Data: data}
+	state := model.ArtifactState{Data: data}
 	return writeYAML(filepath.Join(s.taskDir(projectSlug, taskSlug), "artifacts", kind+".yaml"), state)
 }
 
@@ -232,6 +214,32 @@ func (s Store) ListArtifacts(projectSlug, taskSlug string) (map[string]map[strin
 	return artifacts, nil
 }
 
+func (s Store) ListProjectTransitions(slug string) ([]model.TransitionRecord, error) {
+	return s.loadTransitions(s.projectTransitionsPath(slug))
+}
+
+func (s Store) AppendProjectTransition(slug string, record model.TransitionRecord) error {
+	transitions, err := s.ListProjectTransitions(slug)
+	if err != nil {
+		return err
+	}
+	transitions = append(transitions, record)
+	return s.saveTransitions(s.projectTransitionsPath(slug), transitions)
+}
+
+func (s Store) ListTaskTransitions(projectSlug, taskSlug string) ([]model.TransitionRecord, error) {
+	return s.loadTransitions(s.taskTransitionsPath(projectSlug, taskSlug))
+}
+
+func (s Store) AppendTaskTransition(projectSlug, taskSlug string, record model.TransitionRecord) error {
+	transitions, err := s.ListTaskTransitions(projectSlug, taskSlug)
+	if err != nil {
+		return err
+	}
+	transitions = append(transitions, record)
+	return s.saveTransitions(s.taskTransitionsPath(projectSlug, taskSlug), transitions)
+}
+
 func (s Store) loadEvents(path string) ([]model.PayloadEvent, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -266,21 +274,41 @@ func (s Store) saveEvents(path string, events []model.PayloadEvent) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-func (s Store) ArchiveProject(project model.ProjectState, year int) error {
-	if err := writeYAML(filepath.Join(s.projectDir(project.Slug), "state.yaml"), project); err != nil {
-		return err
+func (s Store) loadTransitions(path string) ([]model.TransitionRecord, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []model.TransitionRecord{}, nil
+		}
+		return nil, err
 	}
 
-	source := s.projectDir(project.Slug)
-	target := filepath.Join(s.root, "projects", "archive", fmt.Sprintf("%d", year), project.Slug)
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	var transitions []model.TransitionRecord
+	if len(data) == 0 {
+		return []model.TransitionRecord{}, nil
+	}
+	if err := yaml.Unmarshal(data, &transitions); err != nil {
+		return nil, err
+	}
+	if transitions == nil {
+		return []model.TransitionRecord{}, nil
+	}
+	return transitions, nil
+}
+
+func (s Store) saveTransitions(path string, transitions []model.TransitionRecord) error {
+	data, err := yaml.Marshal(transitions)
+	if err != nil {
 		return err
 	}
-	return os.Rename(source, target)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }
 
 func (s Store) ListProjects() ([]model.ProjectState, error) {
-	entries, err := os.ReadDir(s.activeProjectsDir())
+	entries, err := os.ReadDir(s.projectsDir())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

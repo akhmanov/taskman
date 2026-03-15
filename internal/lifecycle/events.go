@@ -52,7 +52,6 @@ func isAllowedPayloadEventType(eventType model.PayloadEventType) bool {
 		model.PayloadEventTypeBlocker,
 		model.PayloadEventTypeHandoff,
 		model.PayloadEventTypeReference,
-		model.PayloadEventTypeTransition,
 		model.PayloadEventTypeScopeChange:
 		return true
 	default:

@@ -2,12 +2,16 @@ package store
 
 import "path/filepath"
 
-func (s Store) activeProjectsDir() string {
-	return filepath.Join(s.root, "projects", "active")
+func (s Store) configPath() string {
+	return filepath.Join(s.root, "taskman.yaml")
+}
+
+func (s Store) projectsDir() string {
+	return filepath.Join(s.root, "projects")
 }
 
 func (s Store) projectDir(slug string) string {
-	return filepath.Join(s.activeProjectsDir(), slug)
+	return filepath.Join(s.projectsDir(), slug)
 }
 
 func (s Store) projectBriefPath(slug string) string {
@@ -16,6 +20,10 @@ func (s Store) projectBriefPath(slug string) string {
 
 func (s Store) projectEventsPath(slug string) string {
 	return filepath.Join(s.projectDir(slug), "events.yaml")
+}
+
+func (s Store) projectTransitionsPath(slug string) string {
+	return filepath.Join(s.projectDir(slug), "transitions.yaml")
 }
 
 func (s Store) taskDir(projectSlug, taskSlug string) string {
@@ -30,6 +38,6 @@ func (s Store) taskEventsPath(projectSlug, taskSlug string) string {
 	return filepath.Join(s.taskDir(projectSlug, taskSlug), "events.yaml")
 }
 
-func (s Store) sessionDir(projectSlug, taskSlug, sessionID string) string {
-	return filepath.Join(s.taskDir(projectSlug, taskSlug), "sessions", sessionID)
+func (s Store) taskTransitionsPath(projectSlug, taskSlug string) string {
+	return filepath.Join(s.taskDir(projectSlug, taskSlug), "transitions.yaml")
 }

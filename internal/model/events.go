@@ -8,7 +8,6 @@ const (
 	PayloadEventTypeBlocker     PayloadEventType = "blocker"
 	PayloadEventTypeHandoff     PayloadEventType = "handoff"
 	PayloadEventTypeReference   PayloadEventType = "reference"
-	PayloadEventTypeTransition  PayloadEventType = "transition"
 	PayloadEventTypeScopeChange PayloadEventType = "scope_change"
 )
 
