@@ -2,6 +2,9 @@ package lifecycle
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
@@ -16,149 +19,146 @@ type ProjectService struct {
 	now    func() time.Time
 }
 
+type CreateInput struct {
+	Name        string
+	Description string
+	Labels      []string
+	Vars        map[string]string
+}
+
+type MessageInput struct {
+	Actor string
+	Kind  model.MessageKind
+	Body  string
+}
+
 func NewProjectService(s store.Store, runner steps.Runner) ProjectService {
 	return ProjectService{store: s, runner: runner, now: time.Now}
 }
 
-func (s ProjectService) Create(slug string, labels []string, vars map[string]string) (model.ProjectState, error) {
+func (s ProjectService) Create(slug string, input CreateInput) (model.ProjectRecord, error) {
+	if input.Description == "" {
+		return model.ProjectRecord{}, fmt.Errorf("project description is required")
+	}
 	cfg, err := s.store.LoadConfig()
 	if err != nil {
-		return model.ProjectState{}, err
+		return model.ProjectRecord{}, err
 	}
-	now := s.now().UTC().Format(time.RFC3339)
-	project := model.ProjectState{
-		Slug:      slug,
-		Status:    model.StatusBacklog,
-		Labels:    append(append([]string{}, cfg.Defaults.Project.Labels...), labels...),
-		Vars:      model.MergeVars(cfg.Defaults.Project.Vars, vars),
-		CreatedAt: now,
-		UpdatedAt: now,
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	manifest := model.Manifest{
+		ID:          newID(),
+		Kind:        model.EntityKindProject,
+		Slug:        slug,
+		Name:        fallbackName(slug, input.Name),
+		Description: input.Description,
+		CreatedAt:   now,
 	}
-	if err := s.store.ScaffoldProject(project); err != nil {
-		return model.ProjectState{}, err
+	if err := s.store.CreateProject(manifest); err != nil {
+		return model.ProjectRecord{}, err
 	}
-	return project, nil
+	patch := model.MetadataPatch{Labels: append([]string{}, input.Labels...), VarsSet: model.MergeVars(cfg.Defaults.Project.Vars, input.Vars)}
+	if len(cfg.Defaults.Project.Labels) > 0 || len(input.Labels) > 0 || len(patch.VarsSet) > 0 {
+		patch.Labels = append(append([]string{}, cfg.Defaults.Project.Labels...), input.Labels...)
+		if err := s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: manifest.ID, Kind: model.EventKindMetadataPatch, At: now, Actor: "taskman", MetadataPatch: &patch}); err != nil {
+			return model.ProjectRecord{}, err
+		}
+	}
+	return s.store.LoadProject(slug)
 }
 
-func (s ProjectService) Update(slug string, labels []string, vars map[string]string, unsetVars []string) (model.ProjectState, error) {
-	project, err := s.store.LoadProject(slug)
+func (s ProjectService) Update(slug string, labels []string, vars map[string]string, unsetVars []string) (model.ProjectRecord, error) {
+	record, err := s.store.LoadProject(slug)
 	if err != nil {
-		return model.ProjectState{}, err
+		return model.ProjectRecord{}, err
 	}
+	patch := model.MetadataPatch{VarsSet: vars, VarsUnset: unsetVars}
 	if labels != nil {
-		project.Labels = append([]string{}, labels...)
+		patch.Labels = append([]string{}, labels...)
 	}
-	if project.Vars == nil {
-		project.Vars = map[string]string{}
+	event := model.Event{ID: newID(), EntityID: record.Manifest.ID, Kind: model.EventKindMetadataPatch, At: s.now().UTC().Format(time.RFC3339Nano), Actor: "taskman", ParentHeadID: record.State.CurrentHeadID, MetadataPatch: &patch}
+	if err := s.store.AppendProjectEvent(slug, event); err != nil {
+		return model.ProjectRecord{}, err
 	}
-	for _, key := range unsetVars {
-		delete(project.Vars, key)
-	}
-	if vars != nil {
-		project.Vars = model.MergeVars(project.Vars, vars)
-	}
-	project.UpdatedAt = s.now().UTC().Format(time.RFC3339)
-	if err := s.store.SaveProject(project); err != nil {
-		return model.ProjectState{}, err
-	}
-	return project, nil
+	return s.store.LoadProject(slug)
 }
 
-func (s ProjectService) GetBrief(slug string) (string, error) {
-	if _, err := s.store.LoadProject(slug); err != nil {
-		return "", err
-	}
-	return s.store.LoadProjectBrief(slug)
-}
-
-func (s ProjectService) SetBrief(slug, brief string) error {
-	if _, err := s.store.LoadProject(slug); err != nil {
-		return err
-	}
-	if err := validateProjectBrief(brief); err != nil {
-		return err
-	}
-	return s.store.SaveProjectBrief(slug, brief)
-}
-
-func (s ProjectService) AddEvent(slug string, event model.PayloadEvent) error {
-	if _, err := s.store.LoadProject(slug); err != nil {
-		return err
-	}
-	if err := validatePayloadEvent(event); err != nil {
-		return err
-	}
-	existing, err := s.store.ListProjectEvents(slug)
+func (s ProjectService) AddMessage(slug string, input MessageInput) error {
+	record, err := s.store.LoadProject(slug)
 	if err != nil {
 		return err
 	}
-	if hasEventID(existing, event.ID) {
-		return fmt.Errorf("event id %q already exists", event.ID)
+	if input.Body == "" {
+		return fmt.Errorf("message body is required")
 	}
-	return s.store.AppendProjectEvent(slug, event)
+	if input.Kind == "" {
+		input.Kind = model.MessageKindComment
+	}
+	return s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: record.Manifest.ID, Kind: model.EventKindMessage, At: s.now().UTC().Format(time.RFC3339Nano), Actor: fallbackActor(input.Actor), Message: &model.MessagePayload{Kind: input.Kind, Body: input.Body}})
 }
 
-func (s ProjectService) GetEvents(slug string) ([]model.PayloadEvent, error) {
+func (s ProjectService) GetMessages(slug string) ([]model.Event, error) {
 	if _, err := s.store.LoadProject(slug); err != nil {
 		return nil, err
 	}
-	return s.store.ListProjectEvents(slug)
+	events, err := s.store.ListProjectEvents(slug)
+	if err != nil {
+		return nil, err
+	}
+	return filterEvents(events, model.EventKindMessage), nil
 }
 
-func (s ProjectService) Transition(slug, verb string, input TransitionInput) (model.ProjectState, []string, error) {
-	project, err := s.store.LoadProject(slug)
-	if err != nil {
-		return model.ProjectState{}, nil, err
+func (s ProjectService) GetTransitions(slug string) ([]model.Event, error) {
+	if _, err := s.store.LoadProject(slug); err != nil {
+		return nil, err
 	}
-	spec, err := validateTransitionAllowed(project.Status, verb)
+	events, err := s.store.ListProjectEvents(slug)
 	if err != nil {
-		return model.ProjectState{}, nil, err
+		return nil, err
+	}
+	return filterEvents(events, model.EventKindTransition), nil
+}
+
+func (s ProjectService) Transition(slug, verb string, input TransitionInput) (model.ProjectRecord, []string, error) {
+	record, err := s.store.LoadProject(slug)
+	if err != nil {
+		return model.ProjectRecord{}, nil, err
 	}
 	if verb == "complete" {
 		tasks, err := s.store.ListTasks(slug)
 		if err != nil {
-			return model.ProjectState{}, nil, err
+			return model.ProjectRecord{}, nil, err
 		}
 		for _, task := range tasks {
-			if !model.IsTerminalStatus(task.Status) {
-				return model.ProjectState{}, nil, fmt.Errorf("project can be done only when all tasks are done or canceled")
+			if !model.IsTerminalStatus(task.State.Status) {
+				return model.ProjectRecord{}, nil, fmt.Errorf("project can be done only when all tasks are done or canceled")
 			}
 		}
 	}
-	detail, err := buildStatusDetail(spec.To, input)
+	spec, err := validateTransitionAllowed(record.State.Status, verb)
 	if err != nil {
-		return model.ProjectState{}, nil, err
+		return model.ProjectRecord{}, nil, err
 	}
+	contextPayload := steps.Context{RuntimeRoot: s.store.Root(), Project: steps.ProjectContext{Slug: record.Manifest.Slug, Status: string(record.State.Status), Labels: record.State.Labels, Vars: record.State.Vars}, Transition: verb}
 	cfg, err := s.store.LoadConfig()
 	if err != nil {
-		return model.ProjectState{}, nil, err
+		return model.ProjectRecord{}, nil, err
 	}
-	contextPayload := steps.Context{
-		RuntimeRoot: s.store.Root(),
-		Project: steps.ProjectContext{
-			Slug:   project.Slug,
-			Status: string(project.Status),
-			Labels: project.Labels,
-			Vars:   project.Vars,
-		},
-		Transition: verb,
-	}
-	preResult, err := s.runner.Run(context.Background(), verb, cfg.MiddlewareFor("project", verb).Pre, contextPayload)
+	preResult, err := s.runProjectMiddleware(slug, record.Manifest.ID, "pre", verb, cfg.MiddlewareFor("project", verb).Pre, contextPayload)
 	if err != nil {
-		return model.ProjectState{}, nil, err
+		return model.ProjectRecord{}, nil, err
 	}
 	if !preResult.OK {
-		return model.ProjectState{}, nil, fmt.Errorf(lastResultMessage(preResult))
+		return model.ProjectRecord{}, nil, errors.New(lastResultMessage(preResult))
 	}
-	previous := project.Status
-	project.Status = spec.To
-	project.StatusDetail = detail
-	project.UpdatedAt = s.now().UTC().Format(time.RFC3339)
-	contextPayload.Project.Status = string(project.Status)
-	postResult, err := s.runner.Run(context.Background(), verb, cfg.MiddlewareFor("project", verb).Post, contextPayload)
+	detail, err := buildStatusDetail(spec.To, input)
+	if err != nil {
+		return model.ProjectRecord{}, nil, err
+	}
 	warnings := collectWarnings(preResult)
 	facts := collectFacts(preResult)
-	artifacts := collectArtifacts(preResult)
+	artifacts := []string{}
+	contextPayload.Project.Status = string(spec.To)
+	postResult, err := s.runProjectMiddleware(slug, record.Manifest.ID, "post", verb, cfg.MiddlewareFor("project", verb).Post, contextPayload)
 	if err != nil {
 		warnings = append(warnings, err.Error())
 	} else {
@@ -167,14 +167,67 @@ func (s ProjectService) Transition(slug, verb string, input TransitionInput) (mo
 			warnings = append(warnings, lastResultMessage(postResult))
 		}
 		mergeFacts(facts, collectFacts(postResult))
-		mergeArtifacts(artifacts, collectArtifacts(postResult))
+		for key := range collectArtifacts(postResult) {
+			artifacts = append(artifacts, key)
+		}
 	}
-	if err := s.store.SaveProject(project); err != nil {
-		return model.ProjectState{}, nil, err
+	transitionEvent := model.Event{ID: newID(), EntityID: record.Manifest.ID, Kind: model.EventKindTransition, At: s.now().UTC().Format(time.RFC3339Nano), Actor: fallbackActor(input.Actor), ParentHeadID: record.State.CurrentHeadID, Transition: &model.TransitionPayload{Verb: verb, From: record.State.Status, To: spec.To, ReasonType: detail.ReasonType, Reason: detail.Reason, ResumeWhen: detail.ResumeWhen, Summary: detail.Summary, Warnings: warnings, Facts: facts, Artifacts: artifacts}}
+	if err := s.store.AppendProjectEvent(slug, transitionEvent); err != nil {
+		return model.ProjectRecord{}, nil, err
 	}
-	record := transitionRecord(project.UpdatedAt, input.Actor, verb, previous, spec.To, input, warnings, facts, artifacts)
-	if err := s.store.AppendProjectTransition(slug, record); err != nil {
-		return model.ProjectState{}, nil, err
+	recordAfter, err := s.store.LoadProject(slug)
+	if err != nil {
+		return model.ProjectRecord{}, nil, err
 	}
-	return project, warnings, nil
+	return recordAfter, warnings, nil
+}
+
+func (s ProjectService) runProjectMiddleware(slug, entityID, phase, verb string, commands []model.MiddlewareCommand, input steps.Context) (steps.PhaseResult, error) {
+	startedAt := s.now().UTC().Format(time.RFC3339Nano)
+	_ = s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseStart, At: startedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: true, Message: verb}})
+	result, err := s.runner.Run(context.Background(), verb, commands, input)
+	finishedAt := s.now().UTC().Format(time.RFC3339Nano)
+	if err != nil {
+		_ = s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseFinish, At: finishedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: false, Message: err.Error()}})
+		return steps.PhaseResult{}, err
+	}
+	for _, step := range result.Steps {
+		artifacts := []string{}
+		for key := range step.Result.Artifacts {
+			artifacts = append(artifacts, key)
+		}
+		_ = s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewareStepFinish, At: finishedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, Step: step.Name, OK: step.Result.OK, Message: step.Result.Message, Warnings: step.Result.Warnings, Artifacts: artifacts}})
+	}
+	_ = s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseFinish, At: finishedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: result.OK, Message: lastResultMessage(result), Warnings: collectWarnings(result)}})
+	return result, nil
+}
+
+func filterEvents(events []model.Event, kind model.EventKind) []model.Event {
+	filtered := []model.Event{}
+	for _, event := range events {
+		if event.Kind == kind {
+			filtered = append(filtered, event)
+		}
+	}
+	return filtered
+}
+
+func fallbackActor(actor string) string {
+	if actor == "" {
+		return "taskman"
+	}
+	return actor
+}
+
+func fallbackName(slug, name string) string {
+	if name == "" {
+		return slug
+	}
+	return name
+}
+
+func newID() string {
+	buf := make([]byte, 8)
+	_, _ = rand.Read(buf)
+	return hex.EncodeToString(buf)
 }
