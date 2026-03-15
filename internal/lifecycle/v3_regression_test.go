@@ -102,7 +102,7 @@ func TestProjectServiceMiddlewareWriteFailsClosedWhenJournalAppendFails(t *testi
 	}
 	defer os.Chmod(eventsDir, 0o755)
 
-	_, err = projectSvc.runProjectMiddleware("alpha", project.Manifest.ID, "pre", "plan", nil, steps.Context{})
+	_, err = projectSvc.runProjectMiddleware("alpha", project.Manifest.ID, "pre", "plan", []model.MiddlewareCommand{{Name: "noop", Cmd: []string{"sh", "-c", "true"}}}, steps.Context{})
 	if err == nil {
 		t.Fatalf("middleware journaling should fail closed when append fails")
 	}

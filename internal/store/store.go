@@ -26,19 +26,19 @@ func (s Store) Root() string {
 	return s.root
 }
 
-func (s Store) LoadConfig() (model.Config, error) {
+func (s Store) LoadOptionalConfig() (model.Config, bool, error) {
 	var cfg model.Config
 	err := readYAML(s.configPath(), &cfg)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return model.Config{}, fmt.Errorf("No taskman.yaml found in %s. Run `taskman --root %s init` first.", s.root, s.root)
+			return model.Config{}, false, nil
 		}
-		return model.Config{}, err
+		return model.Config{}, true, err
 	}
 	if err := cfg.Validate(); err != nil {
-		return model.Config{}, err
+		return model.Config{}, true, err
 	}
-	return cfg, nil
+	return cfg, true, nil
 }
 
 func (s Store) InitConfig() error {

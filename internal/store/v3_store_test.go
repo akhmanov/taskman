@@ -64,3 +64,26 @@ func TestLoadRecordsFallbackUpdatedAtToManifestCreationTime(t *testing.T) {
 		t.Fatalf("task UpdatedAt = %q, want %q", loadedTask.State.UpdatedAt, taskCreatedAt)
 	}
 }
+
+func TestLoadOptionalConfigHandlesMissingAndInvalidFiles(t *testing.T) {
+	root := t.TempDir()
+	s := New(root)
+
+	cfg, present, err := s.LoadOptionalConfig()
+	if err != nil {
+		t.Fatalf("missing optional config should not fail: %v", err)
+	}
+	if present {
+		t.Fatalf("missing optional config should report present=false")
+	}
+	if len(cfg.Defaults.Project.Labels) != 0 || len(cfg.Defaults.Task.Labels) != 0 || len(cfg.Middleware.Project) != 0 || len(cfg.Middleware.Task) != 0 || cfg.Defaults.Project.Vars != nil || cfg.Defaults.Task.Vars != nil {
+		t.Fatalf("missing optional config should return zero config, got %#v", cfg)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "taskman.yaml"), []byte("middleware:\n  project:\n    plan:\n      pre:\n        - name: broken\n"), 0o644); err != nil {
+		t.Fatalf("write invalid config: %v", err)
+	}
+	if _, present, err = s.LoadOptionalConfig(); err == nil || !present {
+		t.Fatalf("invalid existing config should fail and report present=true, err=%v present=%v", err, present)
+	}
+}

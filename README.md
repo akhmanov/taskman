@@ -17,9 +17,11 @@ taskman --root /path/to/runtime init
 TASKMAN_ROOT=/path/to/runtime taskman project list
 ```
 
-## Initialize a runtime
+## Optional config overlay
 
-Create a minimal `taskman.yaml`:
+`taskman` works without `taskman.yaml`.
+
+Create a minimal overlay config when you want to add defaults or transition middleware:
 
 ```bash
 taskman --root /path/to/runtime init
@@ -62,11 +64,13 @@ Raw events are internal storage. User-facing CLI surfaces derive from them:
 
 ## Middleware model
 
-`taskman.yaml` attaches middleware to built-in transitions:
+If present, `taskman.yaml` attaches middleware to built-in transitions:
 
 - `pre` middleware can block a transition
 - `post` middleware can emit warnings, facts, and artifacts
 - middleware execution is recorded in the internal event journal
+
+If the file is absent, `taskman` falls back to built-in runtime behavior with empty defaults and no middleware.
 
 ## Development
 

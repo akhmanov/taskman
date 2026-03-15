@@ -33,7 +33,7 @@ func (s TaskService) Create(projectSlug, slug string, input CreateInput) (model.
 	if input.Description == "" {
 		return model.TaskRecord{}, fmt.Errorf("task description is required")
 	}
-	cfg, err := s.store.LoadConfig()
+	cfg, _, err := s.store.LoadOptionalConfig()
 	if err != nil {
 		return model.TaskRecord{}, err
 	}
@@ -53,6 +53,9 @@ func (s TaskService) Create(projectSlug, slug string, input CreateInput) (model.
 }
 
 func (s TaskService) Update(projectSlug, taskSlug string, labels []string, vars map[string]string, unsetVars []string) (model.TaskRecord, error) {
+	if _, _, err := s.store.LoadOptionalConfig(); err != nil {
+		return model.TaskRecord{}, err
+	}
 	record, err := s.store.LoadTask(projectSlug, taskSlug)
 	if err != nil {
 		return model.TaskRecord{}, err
@@ -72,6 +75,9 @@ func (s TaskService) Update(projectSlug, taskSlug string, labels []string, vars 
 }
 
 func (s TaskService) AddMessage(projectSlug, taskSlug string, input MessageInput) error {
+	if _, _, err := s.store.LoadOptionalConfig(); err != nil {
+		return err
+	}
 	record, err := s.store.LoadTask(projectSlug, taskSlug)
 	if err != nil {
 		return err
@@ -86,6 +92,9 @@ func (s TaskService) AddMessage(projectSlug, taskSlug string, input MessageInput
 }
 
 func (s TaskService) GetMessages(projectSlug, taskSlug string) ([]model.Event, error) {
+	if _, _, err := s.store.LoadOptionalConfig(); err != nil {
+		return nil, err
+	}
 	if _, err := s.store.LoadTask(projectSlug, taskSlug); err != nil {
 		return nil, err
 	}
@@ -97,6 +106,9 @@ func (s TaskService) GetMessages(projectSlug, taskSlug string) ([]model.Event, e
 }
 
 func (s TaskService) GetTransitions(projectSlug, taskSlug string) ([]model.Event, error) {
+	if _, _, err := s.store.LoadOptionalConfig(); err != nil {
+		return nil, err
+	}
 	if _, err := s.store.LoadTask(projectSlug, taskSlug); err != nil {
 		return nil, err
 	}
@@ -133,7 +145,7 @@ func (s TaskService) Transition(projectSlug, taskSlug, verb string, input Transi
 	if err != nil {
 		return model.TaskRecord{}, nil, err
 	}
-	cfg, err := s.store.LoadConfig()
+	cfg, _, err := s.store.LoadOptionalConfig()
 	if err != nil {
 		return model.TaskRecord{}, nil, err
 	}
@@ -190,6 +202,9 @@ func (s TaskService) stepContext(project model.ProjectRecord, task model.TaskRec
 }
 
 func (s TaskService) runTaskMiddleware(projectSlug, taskSlug, entityID, phase, verb string, commands []model.MiddlewareCommand, input steps.Context) (steps.PhaseResult, error) {
+	if len(commands) == 0 {
+		return steps.PhaseResult{OK: true}, nil
+	}
 	startedAt := s.now().UTC().Format(time.RFC3339Nano)
 	if err := s.store.AppendTaskEvent(projectSlug, taskSlug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseStart, At: startedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: true, Message: verb}}); err != nil {
 		return steps.PhaseResult{}, err
