@@ -3,9 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -22,20 +20,12 @@ func BuildApp() *urfavecli.Command {
 		Name:  "project",
 		Usage: "Manage projects",
 		Commands: []*urfavecli.Command{
-			{Name: "list", Usage: "List projects in canonical status order", Flags: []urfavecli.Flag{&urfavecli.StringFlag{Name: "status", Usage: "Include only these statuses (comma-separated)"}, &urfavecli.StringFlag{Name: "exclude-status", Usage: "Hide these statuses (comma-separated)"}, &urfavecli.BoolFlag{Name: "active", Usage: "Shortcut for --exclude-status done,canceled"}}, Action: projectsListAction},
-			{Name: "show", Usage: "Show a grouped project workboard", ArgsUsage: "<project>", Flags: []urfavecli.Flag{&urfavecli.BoolFlag{Name: "all", Usage: "Expand done and canceled task groups"}}, Action: projectsShowAction},
-			{Name: "add", Usage: "Add a backlog project", ArgsUsage: "<project>", Flags: metadataFlags(), Action: projectsAddAction},
-			{Name: "update", Usage: "Update project metadata", ArgsUsage: "<project>", Flags: updateFlags(), Action: projectsUpdateAction},
-			{Name: "brief", Usage: "Manage project brief", Commands: []*urfavecli.Command{
-				{Name: "show", Usage: "Show project brief", ArgsUsage: "<project>", Action: projectsBriefShowAction},
-				{Name: "set", Usage: "Set project brief", ArgsUsage: "<project>", Flags: briefSetFlags(), Action: projectsBriefSetAction},
-				{Name: "init", Usage: "Initialize project brief template", ArgsUsage: "<project>", Flags: []urfavecli.Flag{&urfavecli.BoolFlag{Name: "force"}}, Action: projectsBriefInitAction},
-				{Name: "edit", Usage: "Edit project brief in $EDITOR", ArgsUsage: "<project>", Action: projectsBriefEditAction},
-			}},
-			{Name: "event", Usage: "Manage project events", Commands: []*urfavecli.Command{
-				{Name: "add", Usage: "Add project event", ArgsUsage: "<project>", Flags: payloadEventFlags(), Action: projectsEventAddAction},
-				{Name: "list", Usage: "List project events", ArgsUsage: "<project>", Action: projectsEventListAction},
-			}},
+			{Name: "list", Usage: "List projects in canonical status order", Flags: listFlags(false), Action: projectsListAction},
+			{Name: "show", Usage: "Show a project workboard", ArgsUsage: "<project>", Action: projectsShowAction},
+			{Name: "add", Usage: "Create a project manifest", ArgsUsage: "<project>", Flags: createFlags(), Action: projectsAddAction},
+			{Name: "update", Usage: "Append project metadata changes", ArgsUsage: "<project>", Flags: updateFlags(), Action: projectsUpdateAction},
+			{Name: "message", Usage: "Manage project messages", Commands: []*urfavecli.Command{{Name: "add", Usage: "Add project message", ArgsUsage: "<project>", Flags: messageFlags(), Action: projectsMessageAddAction}, {Name: "list", Usage: "List project messages", ArgsUsage: "<project>", Action: projectsMessageListAction}}},
+			{Name: "transition", Usage: "Inspect project transitions", Commands: []*urfavecli.Command{{Name: "list", Usage: "List project transitions", ArgsUsage: "<project>", Action: projectsTransitionListAction}}},
 			{Name: "plan", Usage: "Move project to planned", ArgsUsage: "<project>", Action: projectTransitionAction("plan")},
 			{Name: "start", Usage: "Move project to in_progress", ArgsUsage: "<project>", Action: projectTransitionAction("start")},
 			{Name: "pause", Usage: "Pause a project", ArgsUsage: "<project>", Flags: pauseFlags(), Action: projectTransitionAction("pause")},
@@ -50,20 +40,12 @@ func BuildApp() *urfavecli.Command {
 		Name:  "task",
 		Usage: "Manage tasks",
 		Commands: []*urfavecli.Command{
-			{Name: "list", Usage: "List tasks in canonical status order", Flags: []urfavecli.Flag{projectFlag(), &urfavecli.StringFlag{Name: "status", Usage: "Include only these statuses (comma-separated)"}, &urfavecli.StringFlag{Name: "exclude-status", Usage: "Hide these statuses (comma-separated)"}, &urfavecli.BoolFlag{Name: "active", Usage: "Shortcut for --exclude-status done,canceled"}}, Action: tasksListAction},
-			{Name: "show", Usage: "Show a task", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: tasksShowAction},
-			{Name: "add", Usage: "Add a backlog task", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, metadataFlags()...), Action: tasksAddAction},
-			{Name: "update", Usage: "Update task metadata", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, updateFlags()...), Action: tasksUpdateAction},
-			{Name: "brief", Usage: "Manage task brief", Commands: []*urfavecli.Command{
-				{Name: "show", Usage: "Show task brief", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: tasksBriefShowAction},
-				{Name: "set", Usage: "Set task brief", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, briefSetFlags()...), Action: tasksBriefSetAction},
-				{Name: "init", Usage: "Initialize task brief template", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag(), &urfavecli.BoolFlag{Name: "force"}}, Action: tasksBriefInitAction},
-				{Name: "edit", Usage: "Edit task brief in $EDITOR", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: tasksBriefEditAction},
-			}},
-			{Name: "event", Usage: "Manage task events", Commands: []*urfavecli.Command{
-				{Name: "add", Usage: "Add task event", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, payloadEventFlags()...), Action: tasksEventAddAction},
-				{Name: "list", Usage: "List task events", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: tasksEventListAction},
-			}},
+			{Name: "list", Usage: "List tasks in canonical status order", Flags: append([]urfavecli.Flag{projectFlag()}, listFlags(true)...), Action: tasksListAction},
+			{Name: "show", Usage: "Show a task card", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: tasksShowAction},
+			{Name: "add", Usage: "Create a task manifest", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, createFlags()...), Action: tasksAddAction},
+			{Name: "update", Usage: "Append task metadata changes", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, updateFlags()...), Action: tasksUpdateAction},
+			{Name: "message", Usage: "Manage task messages", Commands: []*urfavecli.Command{{Name: "add", Usage: "Add task message", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, messageFlags()...), Action: tasksMessageAddAction}, {Name: "list", Usage: "List task messages", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: tasksMessageListAction}}},
+			{Name: "transition", Usage: "Inspect task transitions", Commands: []*urfavecli.Command{{Name: "list", Usage: "List task transitions", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: tasksTransitionListAction}}},
 			{Name: "plan", Usage: "Move task to planned", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: taskTransitionAction("plan")},
 			{Name: "start", Usage: "Move task to in_progress", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: taskTransitionAction("start")},
 			{Name: "pause", Usage: "Pause a task", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, pauseFlags()...), Action: taskTransitionAction("pause")},
@@ -75,29 +57,18 @@ func BuildApp() *urfavecli.Command {
 	}
 
 	return &urfavecli.Command{
-		Name:        "taskman",
-		Usage:       "Opinionated task and project workflow for agent-first development",
-		Description: "Built-in lifecycle: backlog -> planned -> in_progress -> paused -> done|canceled. Use list to scan and show to inspect grouped work.",
-		Flags: []urfavecli.Flag{
-			&urfavecli.StringFlag{Name: "root", Value: "../tasks", Usage: "Path to the runtime root", Sources: urfavecli.EnvVars("TASKMAN_ROOT")},
-		},
-		Commands: []*urfavecli.Command{
-			{Name: "init", Usage: "Create a minimal taskman.yaml", Flags: []urfavecli.Flag{&urfavecli.BoolFlag{Name: "force", Usage: "Overwrite an existing taskman.yaml"}}, Action: initAction},
-			project,
-			task,
-		},
+		Name:     "taskman",
+		Usage:    "Append-only project and task workflow for agent-first development",
+		Flags:    []urfavecli.Flag{&urfavecli.StringFlag{Name: "root", Value: ".", Usage: "Path to the runtime root", Sources: urfavecli.EnvVars("TASKMAN_ROOT")}},
+		Commands: []*urfavecli.Command{{Name: "init", Usage: "Create a minimal taskman.yaml", Flags: []urfavecli.Flag{&urfavecli.BoolFlag{Name: "force", Usage: "Overwrite an existing taskman.yaml"}}, Action: initAction}, project, task},
 	}
 }
 
-func runtimeStore(cmd *urfavecli.Command) store.Store {
-	return store.New(cmd.String("root"))
-}
-
+func runtimeStore(cmd *urfavecli.Command) store.Store { return store.New(cmd.String("root")) }
 func projectService(cmd *urfavecli.Command) lifecycle.ProjectService {
 	root := cmd.String("root")
 	return lifecycle.NewProjectService(store.New(root), steps.New(root))
 }
-
 func taskService(cmd *urfavecli.Command) lifecycle.TaskService {
 	root := cmd.String("root")
 	return lifecycle.NewTaskService(store.New(root), steps.New(root))
@@ -115,10 +86,8 @@ func initAction(_ context.Context, cmd *urfavecli.Command) error {
 		if err := os.WriteFile(path, []byte(model.DefaultConfigYAML), 0o644); err != nil {
 			return err
 		}
-	} else {
-		if err := runtimeStore(cmd).InitConfig(); err != nil {
-			return err
-		}
+	} else if err := runtimeStore(cmd).InitConfig(); err != nil {
+		return err
 	}
 	_, err := fmt.Fprintf(os.Stdout, "Initialized: %s\n", path)
 	return err
@@ -139,7 +108,7 @@ func projectsListAction(_ context.Context, cmd *urfavecli.Command) error {
 	projects = filterProjects(projects, include, exclude)
 	sortProjects(projects)
 	for _, project := range projects {
-		if _, err := fmt.Fprintf(os.Stdout, "%s\t%s\n", project.Status, project.Slug); err != nil {
+		if _, err := fmt.Fprintf(os.Stdout, "%s\t%s\n", project.State.Status, project.Manifest.Slug); err != nil {
 			return err
 		}
 	}
@@ -161,7 +130,7 @@ func tasksListAction(_ context.Context, cmd *urfavecli.Command) error {
 	tasks = filterTasks(tasks, include, exclude)
 	sortTasks(tasks)
 	for _, task := range tasks {
-		if _, err := fmt.Fprintf(os.Stdout, "%s\t%s/%s\n", task.Status, task.Project, task.Slug); err != nil {
+		if _, err := fmt.Fprintf(os.Stdout, "%s\t%s/%s\n", task.State.Status, task.Manifest.ProjectSlug, task.Manifest.Slug); err != nil {
 			return err
 		}
 	}
@@ -172,29 +141,30 @@ func projectsShowAction(_ context.Context, cmd *urfavecli.Command) error {
 	if _, err := runtimeStore(cmd).LoadConfig(); err != nil {
 		return err
 	}
-	projectSlug := cmd.Args().First()
-	s := runtimeStore(cmd)
-	project, err := s.LoadProject(projectSlug)
+	project, err := runtimeStore(cmd).LoadProject(cmd.Args().First())
 	if err != nil {
 		return err
 	}
-	tasks, err := s.ListTasks(projectSlug)
+	tasks, err := runtimeStore(cmd).ListTasks(project.Manifest.Slug)
+	if err != nil {
+		return err
+	}
+	messages, err := projectService(cmd).GetMessages(project.Manifest.Slug)
 	if err != nil {
 		return err
 	}
 	sortTasks(tasks)
-	brief, _ := s.LoadProjectBrief(projectSlug)
-	all := cmd.Bool("all")
-	if _, err := fmt.Fprintf(os.Stdout, "Project: %s\n", project.Slug); err != nil {
+	if _, err := fmt.Fprintf(os.Stdout, "Project: %s\n", project.Manifest.Slug); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(os.Stdout, "Status: %s\n", project.Status); err != nil {
+	if _, err := fmt.Fprintf(os.Stdout, "Name: %s\n", project.Manifest.Name); err != nil {
 		return err
 	}
-	if first := firstMeaningfulBriefLine(brief); first != "" {
-		if _, err := fmt.Fprintf(os.Stdout, "Overview: %s\n", first); err != nil {
-			return err
-		}
+	if _, err := fmt.Fprintf(os.Stdout, "Description: %s\n", project.Manifest.Description); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(os.Stdout, "Status: %s\n", project.State.Status); err != nil {
+		return err
 	}
 	for _, warning := range projectWarnings(project, tasks) {
 		if _, err := fmt.Fprintf(os.Stdout, "Needs attention: %s\n", warning); err != nil {
@@ -205,32 +175,28 @@ func projectsShowAction(_ context.Context, cmd *urfavecli.Command) error {
 		return err
 	}
 	buckets := taskBuckets(tasks)
-	hasCollapsedTerminal := false
 	for _, status := range model.CanonicalStatusOrder() {
 		entries := buckets[status]
 		if len(entries) == 0 {
-			continue
-		}
-		if model.IsTerminalStatus(status) && !all {
-			hasCollapsedTerminal = true
-			if _, err := fmt.Fprintf(os.Stdout, "%s: %d %s hidden\n", status, len(entries), pluralize(len(entries), "task", "tasks")); err != nil {
-				return err
-			}
 			continue
 		}
 		if _, err := fmt.Fprintf(os.Stdout, "%s:\n", status); err != nil {
 			return err
 		}
 		for _, task := range entries {
-			line := formatGroupedTaskLine(task, all)
-			if _, err := fmt.Fprintf(os.Stdout, "- %s\n", line); err != nil {
+			if _, err := fmt.Fprintf(os.Stdout, "- %s\n", task.Manifest.Slug); err != nil {
 				return err
 			}
 		}
 	}
-	if hasCollapsedTerminal {
-		if _, err := fmt.Fprintln(os.Stdout, "Use --all to expand done and canceled work."); err != nil {
+	if len(messages) > 0 {
+		if _, err := fmt.Fprintln(os.Stdout, "Recent Project Messages:"); err != nil {
 			return err
+		}
+		for _, message := range tailEvents(messages, 3) {
+			if _, err := fmt.Fprintf(os.Stdout, "- %s: %s\n", message.Message.Kind, message.Message.Body); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -240,37 +206,75 @@ func tasksShowAction(_ context.Context, cmd *urfavecli.Command) error {
 	if _, err := runtimeStore(cmd).LoadConfig(); err != nil {
 		return err
 	}
-	projectSlug := cmd.String("project")
-	taskSlug := cmd.Args().First()
-	s := runtimeStore(cmd)
-	task, err := s.LoadTask(projectSlug, taskSlug)
+	task, err := runtimeStore(cmd).LoadTask(cmd.String("project"), cmd.Args().First())
 	if err != nil {
 		return err
 	}
-	brief, _ := s.LoadTaskBrief(projectSlug, taskSlug)
-	transitions, _ := s.ListTaskTransitions(projectSlug, taskSlug)
-	events, _ := s.ListTaskEvents(projectSlug, taskSlug)
-	if _, err := fmt.Fprintf(os.Stdout, "Task: %s/%s\n", projectSlug, task.Slug); err != nil {
+	project, err := runtimeStore(cmd).LoadProject(cmd.String("project"))
+	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(os.Stdout, "Status: %s\n", task.Status); err != nil {
+	transitions, err := taskService(cmd).GetTransitions(cmd.String("project"), cmd.Args().First())
+	if err != nil {
 		return err
 	}
-	for _, line := range statusDetailLines(task.StatusDetail) {
+	messages, err := taskService(cmd).GetMessages(cmd.String("project"), cmd.Args().First())
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(os.Stdout, "Task: %s/%s\n", task.Manifest.ProjectSlug, task.Manifest.Slug); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(os.Stdout, "Name: %s\n", task.Manifest.Name); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(os.Stdout, "Description: %s\n", task.Manifest.Description); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(os.Stdout, "Status: %s\n", task.State.Status); err != nil {
+		return err
+	}
+	if len(task.State.Labels) > 0 {
+		if _, err := fmt.Fprintf(os.Stdout, "Labels: %s\n", strings.Join(task.State.Labels, ", ")); err != nil {
+			return err
+		}
+	}
+	if len(task.State.Vars) > 0 {
+		if _, err := fmt.Fprintf(os.Stdout, "Vars: %s\n", formatVars(task.State.Vars)); err != nil {
+			return err
+		}
+	}
+	for _, line := range statusDetailLines(task.State.StatusDetail) {
 		if _, err := fmt.Fprintln(os.Stdout, line); err != nil {
 			return err
 		}
 	}
-	if first := firstMeaningfulBriefLine(brief); first != "" {
-		if _, err := fmt.Fprintf(os.Stdout, "Overview: %s\n", first); err != nil {
+	allowed := allowedTaskTransitionVerbs(task.State, project.State.Status)
+	if _, err := fmt.Fprintf(os.Stdout, "Allowed Next: %s\n", strings.Join(allowed, ", ")); err != nil {
+		return err
+	}
+	if task.State.HasConflict() {
+		if _, err := fmt.Fprintf(os.Stdout, "Conflict: unresolved heads %s\n", strings.Join(task.State.UnresolvedHead, ", ")); err != nil {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintf(os.Stdout, "Transitions: %d\n", len(transitions)); err != nil {
-		return err
+	if len(transitions) > 0 {
+		last := transitions[len(transitions)-1]
+		if _, err := fmt.Fprintf(os.Stdout, "Transitions: %d\n", len(transitions)); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(os.Stdout, "Last Transition: %s -> %s via %s\n", last.Transition.From, last.Transition.To, last.Transition.Verb); err != nil {
+			return err
+		}
 	}
-	if _, err := fmt.Fprintf(os.Stdout, "Events: %d\n", len(events)); err != nil {
-		return err
+	if len(messages) > 0 {
+		if _, err := fmt.Fprintf(os.Stdout, "Messages: %d\n", len(messages)); err != nil {
+			return err
+		}
+		last := messages[len(messages)-1]
+		if _, err := fmt.Fprintf(os.Stdout, "Last Message: %s - %s\n", last.Message.Kind, last.Message.Body); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -280,7 +284,7 @@ func projectsAddAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	project, err := projectService(cmd).Create(cmd.Args().First(), cmd.StringSlice("label"), vars)
+	project, err := projectService(cmd).Create(cmd.Args().First(), lifecycle.CreateInput{Name: cmd.String("name"), Description: cmd.String("description"), Labels: cmd.StringSlice("label"), Vars: vars})
 	if err != nil {
 		return err
 	}
@@ -304,7 +308,7 @@ func tasksAddAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	task, err := taskService(cmd).Create(cmd.String("project"), cmd.Args().First(), cmd.StringSlice("label"), vars)
+	task, err := taskService(cmd).Create(cmd.String("project"), cmd.Args().First(), lifecycle.CreateInput{Name: cmd.String("name"), Description: cmd.String("description"), Labels: cmd.StringSlice("label"), Vars: vars})
 	if err != nil {
 		return err
 	}
@@ -323,21 +327,63 @@ func tasksUpdateAction(_ context.Context, cmd *urfavecli.Command) error {
 	return renderTaskSummary(task, nil)
 }
 
+func projectsMessageAddAction(_ context.Context, cmd *urfavecli.Command) error {
+	kind, err := parseMessageKind(cmd.String("kind"))
+	if err != nil {
+		return err
+	}
+	return projectService(cmd).AddMessage(cmd.Args().First(), lifecycle.MessageInput{Actor: cmd.String("actor"), Kind: kind, Body: cmd.String("body")})
+}
+func tasksMessageAddAction(_ context.Context, cmd *urfavecli.Command) error {
+	kind, err := parseMessageKind(cmd.String("kind"))
+	if err != nil {
+		return err
+	}
+	return taskService(cmd).AddMessage(cmd.String("project"), cmd.Args().First(), lifecycle.MessageInput{Actor: cmd.String("actor"), Kind: kind, Body: cmd.String("body")})
+}
+
+func projectsMessageListAction(_ context.Context, cmd *urfavecli.Command) error {
+	messages, err := projectService(cmd).GetMessages(cmd.Args().First())
+	if err != nil {
+		return err
+	}
+	return renderMessages(messages)
+}
+func tasksMessageListAction(_ context.Context, cmd *urfavecli.Command) error {
+	messages, err := taskService(cmd).GetMessages(cmd.String("project"), cmd.Args().First())
+	if err != nil {
+		return err
+	}
+	return renderMessages(messages)
+}
+
+func projectsTransitionListAction(_ context.Context, cmd *urfavecli.Command) error {
+	transitions, err := projectService(cmd).GetTransitions(cmd.Args().First())
+	if err != nil {
+		return err
+	}
+	return renderTransitions(transitions)
+}
+func tasksTransitionListAction(_ context.Context, cmd *urfavecli.Command) error {
+	transitions, err := taskService(cmd).GetTransitions(cmd.String("project"), cmd.Args().First())
+	if err != nil {
+		return err
+	}
+	return renderTransitions(transitions)
+}
+
 func projectTransitionAction(verb string) urfavecli.ActionFunc {
 	return func(_ context.Context, cmd *urfavecli.Command) error {
-		input := transitionInputFromFlags(cmd)
-		project, warnings, err := projectService(cmd).Transition(cmd.Args().First(), verb, input)
+		project, warnings, err := projectService(cmd).Transition(cmd.Args().First(), verb, transitionInputFromFlags(cmd))
 		if err != nil {
 			return err
 		}
 		return renderProjectSummary(project, warnings)
 	}
 }
-
 func taskTransitionAction(verb string) urfavecli.ActionFunc {
 	return func(_ context.Context, cmd *urfavecli.Command) error {
-		input := transitionInputFromFlags(cmd)
-		task, warnings, err := taskService(cmd).Transition(cmd.String("project"), cmd.Args().First(), verb, input)
+		task, warnings, err := taskService(cmd).Transition(cmd.String("project"), cmd.Args().First(), verb, transitionInputFromFlags(cmd))
 		if err != nil {
 			return err
 		}
@@ -345,187 +391,30 @@ func taskTransitionAction(verb string) urfavecli.ActionFunc {
 	}
 }
 
-func projectsBriefShowAction(_ context.Context, cmd *urfavecli.Command) error {
-	brief, err := projectService(cmd).GetBrief(cmd.Args().First())
-	if err != nil {
-		return err
-	}
-	_, err = io.WriteString(os.Stdout, brief)
-	return err
+func createFlags() []urfavecli.Flag {
+	return []urfavecli.Flag{&urfavecli.StringFlag{Name: "name"}, &urfavecli.StringFlag{Name: "description", Required: true}, &urfavecli.StringSliceFlag{Name: "label"}, &urfavecli.StringSliceFlag{Name: "var"}}
 }
-
-func tasksBriefShowAction(_ context.Context, cmd *urfavecli.Command) error {
-	brief, err := taskService(cmd).GetBrief(cmd.String("project"), cmd.Args().First())
-	if err != nil {
-		return err
-	}
-	_, err = io.WriteString(os.Stdout, brief)
-	return err
-}
-
-func projectsBriefSetAction(_ context.Context, cmd *urfavecli.Command) error {
-	brief, _, err := resolveBriefContent(cmd)
-	if err != nil {
-		return err
-	}
-	return projectService(cmd).SetBrief(cmd.Args().First(), brief)
-}
-
-func tasksBriefSetAction(_ context.Context, cmd *urfavecli.Command) error {
-	brief, _, err := resolveBriefContent(cmd)
-	if err != nil {
-		return err
-	}
-	return taskService(cmd).SetBrief(cmd.String("project"), cmd.Args().First(), brief)
-}
-
-func projectsBriefInitAction(_ context.Context, cmd *urfavecli.Command) error {
-	projectSlug := cmd.Args().First()
-	current, err := projectService(cmd).GetBrief(projectSlug)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(current) != "" && !cmd.Bool("force") {
-		return fmt.Errorf("project brief already exists; use --force to overwrite")
-	}
-	return projectService(cmd).SetBrief(projectSlug, model.ProjectBriefTemplate)
-}
-
-func tasksBriefInitAction(_ context.Context, cmd *urfavecli.Command) error {
-	taskSlug := cmd.Args().First()
-	current, err := taskService(cmd).GetBrief(cmd.String("project"), taskSlug)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(current) != "" && !cmd.Bool("force") {
-		return fmt.Errorf("task brief already exists; use --force to overwrite")
-	}
-	return taskService(cmd).SetBrief(cmd.String("project"), taskSlug, model.TaskBriefTemplate)
-}
-
-func projectsBriefEditAction(_ context.Context, cmd *urfavecli.Command) error {
-	current, err := projectService(cmd).GetBrief(cmd.Args().First())
-	if err != nil {
-		return err
-	}
-	edited, err := editBriefContent(current, model.ProjectBriefTemplate)
-	if err != nil {
-		return err
-	}
-	return projectService(cmd).SetBrief(cmd.Args().First(), edited)
-}
-
-func tasksBriefEditAction(_ context.Context, cmd *urfavecli.Command) error {
-	current, err := taskService(cmd).GetBrief(cmd.String("project"), cmd.Args().First())
-	if err != nil {
-		return err
-	}
-	edited, err := editBriefContent(current, model.TaskBriefTemplate)
-	if err != nil {
-		return err
-	}
-	return taskService(cmd).SetBrief(cmd.String("project"), cmd.Args().First(), edited)
-}
-
-func projectsEventAddAction(_ context.Context, cmd *urfavecli.Command) error {
-	event, err := payloadEventFromFlags(cmd)
-	if err != nil {
-		return err
-	}
-	return projectService(cmd).AddEvent(cmd.Args().First(), event)
-}
-
-func tasksEventAddAction(_ context.Context, cmd *urfavecli.Command) error {
-	event, err := payloadEventFromFlags(cmd)
-	if err != nil {
-		return err
-	}
-	return taskService(cmd).AddEvent(cmd.String("project"), cmd.Args().First(), event)
-}
-
-func projectsEventListAction(_ context.Context, cmd *urfavecli.Command) error {
-	events, err := projectService(cmd).GetEvents(cmd.Args().First())
-	if err != nil {
-		return err
-	}
-	for _, event := range events {
-		if _, err := fmt.Fprintf(os.Stdout, "%s\t%s\t%s\n", event.ID, event.Type, event.Summary); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func tasksEventListAction(_ context.Context, cmd *urfavecli.Command) error {
-	events, err := taskService(cmd).GetEvents(cmd.String("project"), cmd.Args().First())
-	if err != nil {
-		return err
-	}
-	for _, event := range events {
-		if _, err := fmt.Fprintf(os.Stdout, "%s\t%s\t%s\n", event.ID, event.Type, event.Summary); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func metadataFlags() []urfavecli.Flag {
-	return []urfavecli.Flag{
-		&urfavecli.StringSliceFlag{Name: "label"},
-		&urfavecli.StringSliceFlag{Name: "var"},
-	}
-}
-
 func updateFlags() []urfavecli.Flag {
-	flags := metadataFlags()
+	flags := []urfavecli.Flag{&urfavecli.StringSliceFlag{Name: "label"}, &urfavecli.StringSliceFlag{Name: "var"}}
 	return append(flags, &urfavecli.StringSliceFlag{Name: "unset-var"})
 }
-
 func projectFlag() urfavecli.Flag {
 	return &urfavecli.StringFlag{Name: "project", Aliases: []string{"p"}, Usage: "Project slug for the task command", Required: true}
 }
-
 func pauseFlags() []urfavecli.Flag {
-	return []urfavecli.Flag{
-		&urfavecli.StringFlag{Name: "reason-type", Usage: "Short machine-friendly pause code"},
-		&urfavecli.StringFlag{Name: "reason", Usage: "Human explanation for the pause"},
-		&urfavecli.StringFlag{Name: "resume-when", Usage: "Condition or date for resuming work"},
-	}
+	return []urfavecli.Flag{&urfavecli.StringFlag{Name: "reason-type"}, &urfavecli.StringFlag{Name: "reason"}, &urfavecli.StringFlag{Name: "resume-when"}}
 }
-
 func completeFlags() []urfavecli.Flag {
-	return []urfavecli.Flag{
-		&urfavecli.StringFlag{Name: "summary", Usage: "Short outcome summary for a done item"},
-	}
+	return []urfavecli.Flag{&urfavecli.StringFlag{Name: "summary"}}
 }
-
 func cancelFlags() []urfavecli.Flag {
-	return []urfavecli.Flag{
-		&urfavecli.StringFlag{Name: "reason-type", Usage: "Short machine-friendly cancel code"},
-		&urfavecli.StringFlag{Name: "reason", Usage: "Human explanation for the cancellation"},
-	}
+	return []urfavecli.Flag{&urfavecli.StringFlag{Name: "reason-type"}, &urfavecli.StringFlag{Name: "reason"}}
 }
-
-func briefSetFlags() []urfavecli.Flag {
-	return []urfavecli.Flag{
-		&urfavecli.StringFlag{Name: "content"},
-		&urfavecli.StringFlag{Name: "file"},
-	}
+func messageFlags() []urfavecli.Flag {
+	return []urfavecli.Flag{&urfavecli.StringFlag{Name: "actor", Value: "taskman"}, &urfavecli.StringFlag{Name: "kind", Value: string(model.MessageKindComment)}, &urfavecli.StringFlag{Name: "body", Required: true}}
 }
-
-func payloadEventFlags() []urfavecli.Flag {
-	return []urfavecli.Flag{
-		&urfavecli.StringFlag{Name: "id", Required: true},
-		&urfavecli.StringFlag{Name: "at", Required: true},
-		&urfavecli.StringFlag{Name: "type", Required: true},
-		&urfavecli.StringFlag{Name: "summary", Required: true},
-		&urfavecli.StringFlag{Name: "details"},
-		&urfavecli.StringFlag{Name: "actor", Required: true},
-		&urfavecli.StringSliceFlag{Name: "ref"},
-		&urfavecli.StringFlag{Name: "rationale"},
-		&urfavecli.StringFlag{Name: "impact"},
-		&urfavecli.StringFlag{Name: "event-status"},
-	}
+func listFlags(projectRequired bool) []urfavecli.Flag {
+	return []urfavecli.Flag{&urfavecli.StringFlag{Name: "status", Usage: "Include only these statuses (comma-separated)"}, &urfavecli.StringFlag{Name: "exclude-status", Usage: "Hide these statuses (comma-separated)"}, &urfavecli.BoolFlag{Name: "active", Usage: "Shortcut for --exclude-status done,canceled"}}
 }
 
 func parseVars(raw []string) (map[string]string, error) {
@@ -543,6 +432,14 @@ func parseVars(raw []string) (map[string]string, error) {
 	return vars, nil
 }
 
+func parseMessageKind(raw string) (model.MessageKind, error) {
+	kind := model.MessageKind(raw)
+	if !model.IsValidMessageKind(kind) {
+		return "", fmt.Errorf("unknown message kind %q", raw)
+	}
+	return kind, nil
+}
+
 func optionalLabels(cmd *urfavecli.Command) []string {
 	if !cmd.IsSet("label") {
 		return nil
@@ -551,13 +448,7 @@ func optionalLabels(cmd *urfavecli.Command) []string {
 }
 
 func transitionInputFromFlags(cmd *urfavecli.Command) lifecycle.TransitionInput {
-	return lifecycle.TransitionInput{
-		Actor:      "taskman",
-		ReasonType: cmd.String("reason-type"),
-		Reason:     cmd.String("reason"),
-		ResumeWhen: cmd.String("resume-when"),
-		Summary:    cmd.String("summary"),
-	}
+	return lifecycle.TransitionInput{Actor: "taskman", ReasonType: cmd.String("reason-type"), Reason: cmd.String("reason"), ResumeWhen: cmd.String("resume-when"), Summary: cmd.String("summary")}
 }
 
 func listStatusFilters(cmd *urfavecli.Command) ([]model.Status, []model.Status, error) {
@@ -575,35 +466,34 @@ func listStatusFilters(cmd *urfavecli.Command) ([]model.Status, []model.Status, 
 	return include, exclude, nil
 }
 
-func filterTasks(tasks []model.TaskState, include, exclude []model.Status) []model.TaskState {
+func filterTasks(tasks []model.TaskRecord, include, exclude []model.Status) []model.TaskRecord {
 	includeSet := makeStatusSet(include)
 	excludeSet := makeStatusSet(exclude)
-	filtered := make([]model.TaskState, 0, len(tasks))
+	filtered := make([]model.TaskRecord, 0, len(tasks))
 	for _, task := range tasks {
 		if len(includeSet) > 0 {
-			if _, ok := includeSet[task.Status]; !ok {
+			if _, ok := includeSet[task.State.Status]; !ok {
 				continue
 			}
 		}
-		if _, ok := excludeSet[task.Status]; ok {
+		if _, ok := excludeSet[task.State.Status]; ok {
 			continue
 		}
 		filtered = append(filtered, task)
 	}
 	return filtered
 }
-
-func filterProjects(projects []model.ProjectState, include, exclude []model.Status) []model.ProjectState {
+func filterProjects(projects []model.ProjectRecord, include, exclude []model.Status) []model.ProjectRecord {
 	includeSet := makeStatusSet(include)
 	excludeSet := makeStatusSet(exclude)
-	filtered := make([]model.ProjectState, 0, len(projects))
+	filtered := make([]model.ProjectRecord, 0, len(projects))
 	for _, project := range projects {
 		if len(includeSet) > 0 {
-			if _, ok := includeSet[project.Status]; !ok {
+			if _, ok := includeSet[project.State.Status]; !ok {
 				continue
 			}
 		}
-		if _, ok := excludeSet[project.Status]; ok {
+		if _, ok := excludeSet[project.State.Status]; ok {
 			continue
 		}
 		filtered = append(filtered, project)
@@ -618,89 +508,82 @@ func makeStatusSet(statuses []model.Status) map[model.Status]struct{} {
 	}
 	return set
 }
-
-func sortTasks(tasks []model.TaskState) {
+func sortTasks(tasks []model.TaskRecord) {
 	sort.Slice(tasks, func(i, j int) bool {
-		left := model.StatusSortIndex(tasks[i].Status)
-		right := model.StatusSortIndex(tasks[j].Status)
+		left, right := model.StatusSortIndex(tasks[i].State.Status), model.StatusSortIndex(tasks[j].State.Status)
 		if left != right {
 			return left < right
 		}
-		if tasks[i].UpdatedAt != tasks[j].UpdatedAt {
-			return tasks[i].UpdatedAt > tasks[j].UpdatedAt
+		if tasks[i].State.UpdatedAt != tasks[j].State.UpdatedAt {
+			return tasks[i].State.UpdatedAt > tasks[j].State.UpdatedAt
 		}
-		return tasks[i].Slug < tasks[j].Slug
+		return tasks[i].Manifest.Slug < tasks[j].Manifest.Slug
 	})
 }
-
-func sortProjects(projects []model.ProjectState) {
+func sortProjects(projects []model.ProjectRecord) {
 	sort.Slice(projects, func(i, j int) bool {
-		left := model.StatusSortIndex(projects[i].Status)
-		right := model.StatusSortIndex(projects[j].Status)
+		left, right := model.StatusSortIndex(projects[i].State.Status), model.StatusSortIndex(projects[j].State.Status)
 		if left != right {
 			return left < right
 		}
-		if projects[i].UpdatedAt != projects[j].UpdatedAt {
-			return projects[i].UpdatedAt > projects[j].UpdatedAt
+		if projects[i].State.UpdatedAt != projects[j].State.UpdatedAt {
+			return projects[i].State.UpdatedAt > projects[j].State.UpdatedAt
 		}
-		return projects[i].Slug < projects[j].Slug
+		return projects[i].Manifest.Slug < projects[j].Manifest.Slug
 	})
 }
-
-func taskBuckets(tasks []model.TaskState) map[model.Status][]model.TaskState {
-	buckets := map[model.Status][]model.TaskState{}
+func taskBuckets(tasks []model.TaskRecord) map[model.Status][]model.TaskRecord {
+	buckets := map[model.Status][]model.TaskRecord{}
 	for _, task := range tasks {
-		buckets[task.Status] = append(buckets[task.Status], task)
+		buckets[task.State.Status] = append(buckets[task.State.Status], task)
 	}
 	return buckets
 }
 
-func formatGroupedTaskLine(task model.TaskState, all bool) string {
-	parts := []string{task.Slug}
-	if detail := task.StatusDetail; task.Status == model.StatusPaused {
-		if detail.Reason != "" {
-			parts = append(parts, detail.Reason)
-		}
-	} else if all && (task.Status == model.StatusDone || task.Status == model.StatusCanceled) {
-		if detail.Summary != "" {
-			parts = append(parts, detail.Summary)
-		}
-		if detail.Reason != "" {
-			parts = append(parts, detail.Reason)
-		}
-	}
-	return strings.Join(parts, " - ")
-}
-
-func projectWarnings(project model.ProjectState, tasks []model.TaskState) []string {
+func projectWarnings(project model.ProjectRecord, tasks []model.TaskRecord) []string {
 	warnings := []string{}
-	inProgress := 0
-	nonTerminal := 0
+	inProgress, nonTerminal := 0, 0
 	for _, task := range tasks {
-		if task.Status == model.StatusInProgress {
+		if task.State.Status == model.StatusInProgress {
 			inProgress++
 		}
-		if !model.IsTerminalStatus(task.Status) {
+		if !model.IsTerminalStatus(task.State.Status) {
 			nonTerminal++
 		}
 	}
-	if project.Status == model.StatusPaused && inProgress > 0 {
-		warnings = append(warnings, fmt.Sprintf("project is paused but has %d in_progress %s", inProgress, pluralize(inProgress, "task", "tasks")))
+	if project.State.Status == model.StatusPaused && inProgress > 0 {
+		warnings = append(warnings, fmt.Sprintf("project is paused but has %d in_progress tasks", inProgress))
 	}
-	if project.Status == model.StatusDone && nonTerminal > 0 {
-		warnings = append(warnings, fmt.Sprintf("project is done but has %d non-terminal %s", nonTerminal, pluralize(nonTerminal, "task", "tasks")))
+	if project.State.Status == model.StatusDone && nonTerminal > 0 {
+		warnings = append(warnings, fmt.Sprintf("project is done but has %d non-terminal tasks", nonTerminal))
 	}
-	if project.Status == model.StatusCanceled && nonTerminal > 0 {
-		warnings = append(warnings, fmt.Sprintf("project is canceled but has %d non-terminal %s", nonTerminal, pluralize(nonTerminal, "task", "tasks")))
+	if project.State.HasConflict() {
+		warnings = append(warnings, "project has unresolved divergent heads")
 	}
 	return warnings
 }
 
-func renderProjectSummary(project model.ProjectState, warnings []string) error {
-	if _, err := fmt.Fprintf(os.Stdout, "Project %s is now %s.\n", project.Slug, project.Status); err != nil {
+func renderProjectSummary(project model.ProjectRecord, warnings []string) error {
+	if _, err := fmt.Fprintf(os.Stdout, "Project %s is now %s.\n", project.Manifest.Slug, project.State.Status); err != nil {
 		return err
 	}
-	for _, line := range statusDetailLines(project.StatusDetail) {
+	for _, line := range statusDetailLines(project.State.StatusDetail) {
+		if _, err := fmt.Fprintln(os.Stdout, line); err != nil {
+			return err
+		}
+	}
+	for _, warning := range warnings {
+		if _, err := fmt.Fprintf(os.Stdout, "Needs follow-up: %s\n", warning); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func renderTaskSummary(task model.TaskRecord, warnings []string) error {
+	if _, err := fmt.Fprintf(os.Stdout, "Task %s/%s is now %s.\n", task.Manifest.ProjectSlug, task.Manifest.Slug, task.State.Status); err != nil {
+		return err
+	}
+	for _, line := range statusDetailLines(task.State.StatusDetail) {
 		if _, err := fmt.Fprintln(os.Stdout, line); err != nil {
 			return err
 		}
@@ -713,17 +596,17 @@ func renderProjectSummary(project model.ProjectState, warnings []string) error {
 	return nil
 }
 
-func renderTaskSummary(task model.TaskState, warnings []string) error {
-	if _, err := fmt.Fprintf(os.Stdout, "Task %s/%s is now %s.\n", task.Project, task.Slug, task.Status); err != nil {
-		return err
-	}
-	for _, line := range statusDetailLines(task.StatusDetail) {
-		if _, err := fmt.Fprintln(os.Stdout, line); err != nil {
+func renderMessages(messages []model.Event) error {
+	for _, message := range messages {
+		if _, err := fmt.Fprintf(os.Stdout, "%s\t%s\t%s\n", message.At, message.Message.Kind, message.Message.Body); err != nil {
 			return err
 		}
 	}
-	for _, warning := range warnings {
-		if _, err := fmt.Fprintf(os.Stdout, "Needs follow-up: %s\n", warning); err != nil {
+	return nil
+}
+func renderTransitions(transitions []model.Event) error {
+	for _, event := range transitions {
+		if _, err := fmt.Fprintf(os.Stdout, "%s\t%s\t%s -> %s\n", event.At, event.Transition.Verb, event.Transition.From, event.Transition.To); err != nil {
 			return err
 		}
 	}
@@ -746,95 +629,51 @@ func statusDetailLines(detail model.StatusDetail) []string {
 	}
 	return lines
 }
+func formatVars(vars map[string]string) string {
+	keys := make([]string, 0, len(vars))
+	for key := range vars {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", key, vars[key]))
+	}
+	return strings.Join(parts, ", ")
+}
+func allowedTransitionVerbs(status model.Status) []string {
+	verbs := []string{}
+	for _, verb := range []string{"plan", "start", "pause", "resume", "complete", "cancel", "reopen"} {
+		if _, err := lifecycle.ValidateTransitionForCLI(status, verb); err == nil {
+			verbs = append(verbs, verb)
+		}
+	}
+	return verbs
+}
 
-func firstMeaningfulBriefLine(brief string) string {
-	for _, line := range strings.Split(brief, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
+func allowedTaskTransitionVerbs(state model.ProjectionState, projectStatus model.Status) []string {
+	if state.HasConflict() {
+		return []string{}
+	}
+	verbs := allowedTransitionVerbs(state.Status)
+	filtered := make([]string, 0, len(verbs))
+	for _, verb := range verbs {
+		if (verb == "start" || verb == "resume") && projectStatus == model.StatusBacklog {
 			continue
 		}
-		return line
+		if projectStatus == model.StatusDone || projectStatus == model.StatusCanceled {
+			if verb != "cancel" && verb != "reopen" {
+				continue
+			}
+		}
+		filtered = append(filtered, verb)
 	}
-	return ""
+	return filtered
 }
 
-func pluralize(count int, singular, plural string) string {
-	if count == 1 {
-		return singular
+func tailEvents(events []model.Event, limit int) []model.Event {
+	if len(events) <= limit {
+		return events
 	}
-	return plural
-}
-
-func resolveBriefContent(cmd *urfavecli.Command) (string, string, error) {
-	content := cmd.String("content")
-	file := cmd.String("file")
-	if strings.TrimSpace(content) == "" && strings.TrimSpace(file) == "" {
-		return "", "", fmt.Errorf("provide --content or --file")
-	}
-	if strings.TrimSpace(content) != "" && strings.TrimSpace(file) != "" {
-		return "", "", fmt.Errorf("provide either --content or --file, not both")
-	}
-	if strings.TrimSpace(content) != "" {
-		return content, "content", nil
-	}
-	if file == "-" {
-		data, err := io.ReadAll(os.Stdin)
-		return string(data), "stdin", err
-	}
-	data, err := os.ReadFile(file)
-	return string(data), file, err
-}
-
-func editBriefContent(current, fallback string) (string, error) {
-	editor := strings.TrimSpace(os.Getenv("VISUAL"))
-	if editor == "" {
-		editor = strings.TrimSpace(os.Getenv("EDITOR"))
-	}
-	if editor == "" {
-		return "", fmt.Errorf("EDITOR or VISUAL must be set")
-	}
-	initial := current
-	if strings.TrimSpace(initial) == "" {
-		initial = fallback
-	}
-	file, err := os.CreateTemp("", "taskman-brief-*.md")
-	if err != nil {
-		return "", err
-	}
-	tmpPath := file.Name()
-	defer os.Remove(tmpPath)
-	if err := file.Close(); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(tmpPath, []byte(initial), 0o600); err != nil {
-		return "", err
-	}
-	editorCommand := exec.Command(editor, tmpPath)
-	editorCommand.Stdin = os.Stdin
-	editorCommand.Stdout = os.Stdout
-	editorCommand.Stderr = os.Stderr
-	if err := editorCommand.Run(); err != nil {
-		return "", err
-	}
-	data, err := os.ReadFile(tmpPath)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
-func payloadEventFromFlags(cmd *urfavecli.Command) (model.PayloadEvent, error) {
-	event := model.PayloadEvent{
-		ID:        cmd.String("id"),
-		At:        cmd.String("at"),
-		Type:      model.PayloadEventType(cmd.String("type")),
-		Summary:   cmd.String("summary"),
-		Details:   cmd.String("details"),
-		Actor:     cmd.String("actor"),
-		Refs:      cmd.StringSlice("ref"),
-		Rationale: cmd.String("rationale"),
-		Impact:    cmd.String("impact"),
-		Status:    cmd.String("event-status"),
-	}
-	return event, nil
+	return events[len(events)-limit:]
 }

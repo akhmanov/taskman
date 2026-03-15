@@ -14,30 +14,26 @@ func (s Store) projectDir(slug string) string {
 	return filepath.Join(s.projectsDir(), slug)
 }
 
-func (s Store) projectBriefPath(slug string) string {
-	return filepath.Join(s.projectDir(slug), "brief.md")
+func (s Store) projectManifestPath(slug string) string {
+	return filepath.Join(s.projectDir(slug), "manifest.json")
 }
 
-func (s Store) projectEventsPath(slug string) string {
-	return filepath.Join(s.projectDir(slug), "events.yaml")
-}
-
-func (s Store) projectTransitionsPath(slug string) string {
-	return filepath.Join(s.projectDir(slug), "transitions.yaml")
+func (s Store) projectEventsDir(slug string) string {
+	return filepath.Join(s.projectDir(slug), "events")
 }
 
 func (s Store) taskDir(projectSlug, taskSlug string) string {
 	return filepath.Join(s.projectDir(projectSlug), "tasks", taskSlug)
 }
 
-func (s Store) taskBriefPath(projectSlug, taskSlug string) string {
-	return filepath.Join(s.taskDir(projectSlug, taskSlug), "brief.md")
+func (s Store) taskManifestPath(projectSlug, taskSlug string) string {
+	return filepath.Join(s.taskDir(projectSlug, taskSlug), "manifest.json")
 }
 
-func (s Store) taskEventsPath(projectSlug, taskSlug string) string {
-	return filepath.Join(s.taskDir(projectSlug, taskSlug), "events.yaml")
+func (s Store) taskEventsDir(projectSlug, taskSlug string) string {
+	return filepath.Join(s.taskDir(projectSlug, taskSlug), "events")
 }
 
-func (s Store) taskTransitionsPath(projectSlug, taskSlug string) string {
-	return filepath.Join(s.taskDir(projectSlug, taskSlug), "transitions.yaml")
+func (s Store) taskArtifactsDir(projectSlug, taskSlug string) string {
+	return filepath.Join(s.taskDir(projectSlug, taskSlug), "artifacts")
 }

@@ -1,15 +1,6 @@
 # taskman
 
-`taskman` is an opinionated Go CLI for agent-first project and task workflow management.
-
-The product contract is built in:
-- fixed statuses for both `project` and `task`: `backlog`, `planned`, `in_progress`, `paused`, `done`, `canceled`;
-- fixed transition verbs;
-- flat `list` views for scanning;
-- grouped `show` views for operational work;
-- append-only transition history kept separate from narrative events.
-
-`taskman` does not use a workflow DSL. `taskman.yaml` is only for runtime defaults and pre/post middleware.
+`taskman` is an append-only Go CLI for project and task workflow management.
 
 ## Runtime root
 
@@ -17,19 +8,13 @@ Runtime root precedence is:
 
 1. `--root`
 2. `TASKMAN_ROOT`
-3. fallback `../tasks`
+3. current directory
 
 Examples:
 
 ```bash
 taskman --root /path/to/runtime init
 TASKMAN_ROOT=/path/to/runtime taskman project list
-```
-
-## Install
-
-```bash
-go install github.com/akhmanov/taskman@latest
 ```
 
 ## Initialize a runtime
@@ -40,76 +25,48 @@ Create a minimal `taskman.yaml`:
 taskman --root /path/to/runtime init
 ```
 
-This writes only `taskman.yaml`. Projects and tasks create their own directories lazily.
-
 ## Command shape
 
 ```bash
-taskman project list
-taskman project show <project> --all
-taskman project add <project>
-taskman project update <project> --var k=v --unset-var k
-taskman project plan <project>
-taskman project start <project>
-taskman project pause <project> --reason-type external_blocker --reason "..." --resume-when "..."
-taskman project resume <project>
-taskman project complete <project> --summary "..."
-taskman project cancel <project> --reason-type deprioritized --reason "..."
-taskman project reopen <project>
+taskman project add docs-refresh --description "Refresh taskman docs"
+taskman project show docs-refresh
+taskman project message add docs-refresh --body "Capture current scope"
+taskman project transition list docs-refresh
+taskman project plan docs-refresh
 
-taskman task list -p <project> --active
-taskman task list -p <project> --status paused,done
-taskman task list -p <project> --exclude-status done,canceled
-taskman task show <task> -p <project>
-taskman task add <task> -p <project>
-taskman task update <task> -p <project> --var k=v --unset-var k
-taskman task plan <task> -p <project>
-taskman task start <task> -p <project>
-taskman task pause <task> -p <project> --reason-type waiting_feedback --reason "..." --resume-when "..."
-taskman task resume <task> -p <project>
-taskman task complete <task> -p <project> --summary "..."
-taskman task cancel <task> -p <project> --reason-type deprioritized --reason "..."
-taskman task reopen <task> -p <project>
+taskman task add api-auth -p docs-refresh --description "Implement API auth"
+taskman task show api-auth -p docs-refresh
+taskman task message add api-auth -p docs-refresh --kind decision --body "Use token auth"
+taskman task transition list api-auth -p docs-refresh
+taskman task start api-auth -p docs-refresh
 ```
-
-The singular resource-first form above is the public CLI.
-
-## Metadata
-
-Creation and update commands support repeatable metadata flags:
-
-```bash
-taskman project add user-permissions --label auth --var repo=cloud
-taskman task add api-auth -p user-permissions --label backend --var branch=feature/api-auth
-```
-
-- `labels` are for filtering and grouping.
-- `vars` are runtime metadata that middleware can inspect.
 
 ## Storage model
 
-`taskman` keeps current state and history separate:
+`taskman` stores each entity as:
 
-- `state.yaml` — current snapshot
-- `brief.md` — current human/agent context
-- `transitions.yaml` — append-only transition audit log
-- `events.yaml` — append-only narrative events (notes, decisions, blockers, handoffs)
+- `manifest.json` - immutable identity and description seed
+- `events/*.json` - append-only journal, one event per file
+- `artifacts/*.json` - durable machine outputs for task middleware
 
-There is no archive area. Terminal entities stay queryable through filters and views.
+Current state is computed on read from `manifest.json` plus journal events.
+
+## Event model
+
+Raw events are internal storage. User-facing CLI surfaces derive from them:
+
+- `message` events power message timelines
+- `transition` events power transition history and current status
+- `metadata_patch` events update labels and vars
+- middleware lifecycle events stay internal by default
 
 ## Middleware model
 
-`taskman.yaml` can attach middleware to built-in transitions:
+`taskman.yaml` attaches middleware to built-in transitions:
 
 - `pre` middleware can block a transition
 - `post` middleware can emit warnings, facts, and artifacts
-- `post` middleware never rolls back an already-applied transition
-
-## Views
-
-- `list` is flat and sorted by canonical status order, then `updated_at desc`
-- `project show` is the main grouped workboard
-- terminal task groups are collapsed by default in `project show`; use `--all` to expand them
+- middleware execution is recorded in the internal event journal
 
 ## Development
 
