@@ -210,6 +210,10 @@ func tasksShowAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
+	project, err := runtimeStore(cmd).LoadProject(cmd.String("project"))
+	if err != nil {
+		return err
+	}
 	transitions, err := taskService(cmd).GetTransitions(cmd.String("project"), cmd.Args().First())
 	if err != nil {
 		return err
@@ -245,7 +249,7 @@ func tasksShowAction(_ context.Context, cmd *urfavecli.Command) error {
 			return err
 		}
 	}
-	allowed := allowedTransitionVerbs(task.State.Status)
+	allowed := allowedTaskTransitionVerbs(task.State, project.State.Status)
 	if _, err := fmt.Fprintf(os.Stdout, "Allowed Next: %s\n", strings.Join(allowed, ", ")); err != nil {
 		return err
 	}
@@ -324,10 +328,18 @@ func tasksUpdateAction(_ context.Context, cmd *urfavecli.Command) error {
 }
 
 func projectsMessageAddAction(_ context.Context, cmd *urfavecli.Command) error {
-	return projectService(cmd).AddMessage(cmd.Args().First(), lifecycle.MessageInput{Actor: cmd.String("actor"), Kind: model.MessageKind(cmd.String("kind")), Body: cmd.String("body")})
+	kind, err := parseMessageKind(cmd.String("kind"))
+	if err != nil {
+		return err
+	}
+	return projectService(cmd).AddMessage(cmd.Args().First(), lifecycle.MessageInput{Actor: cmd.String("actor"), Kind: kind, Body: cmd.String("body")})
 }
 func tasksMessageAddAction(_ context.Context, cmd *urfavecli.Command) error {
-	return taskService(cmd).AddMessage(cmd.String("project"), cmd.Args().First(), lifecycle.MessageInput{Actor: cmd.String("actor"), Kind: model.MessageKind(cmd.String("kind")), Body: cmd.String("body")})
+	kind, err := parseMessageKind(cmd.String("kind"))
+	if err != nil {
+		return err
+	}
+	return taskService(cmd).AddMessage(cmd.String("project"), cmd.Args().First(), lifecycle.MessageInput{Actor: cmd.String("actor"), Kind: kind, Body: cmd.String("body")})
 }
 
 func projectsMessageListAction(_ context.Context, cmd *urfavecli.Command) error {
@@ -419,6 +431,15 @@ func parseVars(raw []string) (map[string]string, error) {
 	}
 	return vars, nil
 }
+
+func parseMessageKind(raw string) (model.MessageKind, error) {
+	kind := model.MessageKind(raw)
+	if !model.IsValidMessageKind(kind) {
+		return "", fmt.Errorf("unknown message kind %q", raw)
+	}
+	return kind, nil
+}
+
 func optionalLabels(cmd *urfavecli.Command) []string {
 	if !cmd.IsSet("label") {
 		return nil
@@ -628,6 +649,26 @@ func allowedTransitionVerbs(status model.Status) []string {
 		}
 	}
 	return verbs
+}
+
+func allowedTaskTransitionVerbs(state model.ProjectionState, projectStatus model.Status) []string {
+	if state.HasConflict() {
+		return []string{}
+	}
+	verbs := allowedTransitionVerbs(state.Status)
+	filtered := make([]string, 0, len(verbs))
+	for _, verb := range verbs {
+		if (verb == "start" || verb == "resume") && projectStatus == model.StatusBacklog {
+			continue
+		}
+		if projectStatus == model.StatusDone || projectStatus == model.StatusCanceled {
+			if verb != "cancel" && verb != "reopen" {
+				continue
+			}
+		}
+		filtered = append(filtered, verb)
+	}
+	return filtered
 }
 
 func tailEvents(events []model.Event, limit int) []model.Event {

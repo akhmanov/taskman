@@ -113,6 +113,39 @@ func TestTaskmanV3ProjectShowAndTaskShowSurfaceRecentContext(t *testing.T) {
 	}
 }
 
+func TestTaskmanV3TaskShowFiltersAllowedNextByProjectState(t *testing.T) {
+	root := t.TempDir()
+	writeTaskmanConfigV3(t, root, minimalTaskmanConfigV3)
+
+	runCLISuccessV3(t, root, "project", "add", "alpha", "--description", "Alpha project")
+	runCLISuccessV3(t, root, "task", "add", "api-auth", "-p", "alpha", "--description", "Implement API auth")
+	runCLISuccessV3(t, root, "task", "plan", "api-auth", "-p", "alpha")
+
+	out, err := captureCLIResultV3(t, []string{"taskman", "--root", root, "task", "show", "api-auth", "-p", "alpha"})
+	if err != nil {
+		t.Fatalf("task show: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Allowed Next: complete, cancel") {
+		t.Fatalf("task show should hide start while project is backlog: %s", out)
+	}
+	if strings.Contains(out, "Allowed Next: start") || strings.Contains(out, "start, complete") {
+		t.Fatalf("task show should not advertise start while project is backlog: %s", out)
+	}
+}
+
+func TestTaskmanV3MessageAddRejectsUnknownKind(t *testing.T) {
+	root := t.TempDir()
+	writeTaskmanConfigV3(t, root, minimalTaskmanConfigV3)
+
+	runCLISuccessV3(t, root, "project", "add", "alpha", "--description", "Alpha project")
+	runCLISuccessV3(t, root, "task", "add", "api-auth", "-p", "alpha", "--description", "Implement API auth")
+
+	out, err := captureCLIResultV3(t, []string{"taskman", "--root", root, "task", "message", "add", "api-auth", "-p", "alpha", "--kind", "typo", "--body", "bad kind"})
+	if err == nil || !strings.Contains(out+err.Error(), "unknown message kind") {
+		t.Fatalf("unknown message kind should fail, err=%v out=%s", err, out)
+	}
+}
+
 const minimalTaskmanConfigV3 = `defaults:
   project:
     labels: []

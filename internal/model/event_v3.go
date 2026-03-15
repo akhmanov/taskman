@@ -43,6 +43,15 @@ type MessagePayload struct {
 	Body string      `json:"body"`
 }
 
+func IsValidMessageKind(kind MessageKind) bool {
+	switch kind {
+	case MessageKindComment, MessageKindDecision, MessageKindBlocker, MessageKindHandoff, MessageKindNote:
+		return true
+	default:
+		return false
+	}
+}
+
 type TransitionPayload struct {
 	Verb       string         `json:"verb"`
 	From       Status         `json:"from"`
