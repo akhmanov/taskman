@@ -71,6 +71,14 @@ func validateTransitionAllowed(current model.Status, verb string) (transitionSpe
 	return transitionSpec{}, fmt.Errorf("transition %q is not allowed from status %q", verb, current)
 }
 
+func ValidateTransitionForCLI(current model.Status, verb string) (model.Status, error) {
+	spec, err := validateTransitionAllowed(current, verb)
+	if err != nil {
+		return "", err
+	}
+	return spec.To, nil
+}
+
 func buildStatusDetail(target model.Status, input TransitionInput) (model.StatusDetail, error) {
 	switch target {
 	case model.StatusPaused:
@@ -90,22 +98,5 @@ func buildStatusDetail(target model.Status, input TransitionInput) (model.Status
 		return model.StatusDetail{ReasonType: input.ReasonType, Reason: input.Reason}, nil
 	default:
 		return model.StatusDetail{}, nil
-	}
-}
-
-func transitionRecord(now string, actor, verb string, from, to model.Status, input TransitionInput, warnings []string, facts map[string]any, artifacts map[string]map[string]any) model.TransitionRecord {
-	return model.TransitionRecord{
-		At:         now,
-		Actor:      actor,
-		Verb:       verb,
-		From:       from,
-		To:         to,
-		ReasonType: input.ReasonType,
-		Reason:     input.Reason,
-		ResumeWhen: input.ResumeWhen,
-		Summary:    input.Summary,
-		Warnings:   warnings,
-		Facts:      facts,
-		Artifacts:  artifacts,
 	}
 }
