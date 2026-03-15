@@ -176,7 +176,7 @@ func (s Store) saveTaskEvents(projectSlug, taskSlug string, events []model.Paylo
 }
 
 func (s Store) SaveArtifact(projectSlug, taskSlug, kind string, data map[string]any) error {
-	state := model.ArtifactState{Version: 1, Data: data}
+	state := model.ArtifactState{Data: data}
 	return writeYAML(filepath.Join(s.taskDir(projectSlug, taskSlug), "artifacts", kind+".yaml"), state)
 }
 

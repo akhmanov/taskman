@@ -1,7 +1,6 @@
 package model
 
 type TaskState struct {
-	Version      int               `json:"version" yaml:"version"`
 	Slug         string            `json:"slug" yaml:"slug"`
 	Project      string            `json:"project" yaml:"project"`
 	Status       TaskStatus        `json:"status" yaml:"status"`

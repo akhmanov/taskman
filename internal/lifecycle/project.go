@@ -27,7 +27,6 @@ func (s ProjectService) Create(slug string, labels []string, vars map[string]str
 	}
 	now := s.now().UTC().Format(time.RFC3339)
 	project := model.ProjectState{
-		Version:   2,
 		Slug:      slug,
 		Status:    model.StatusBacklog,
 		Labels:    append(append([]string{}, cfg.Defaults.Project.Labels...), labels...),

@@ -35,7 +35,6 @@ func (s TaskService) Create(projectSlug, slug string, labels []string, vars map[
 	}
 	now := s.now().UTC().Format(time.RFC3339)
 	task := model.TaskState{
-		Version:   2,
 		Slug:      slug,
 		Project:   projectSlug,
 		Status:    model.StatusBacklog,

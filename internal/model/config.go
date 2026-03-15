@@ -6,7 +6,6 @@ import (
 )
 
 type Config struct {
-	Version    int              `yaml:"version"`
 	Defaults   Defaults         `yaml:"defaults,omitempty"`
 	Middleware MiddlewareConfig `yaml:"middleware,omitempty"`
 }
@@ -37,9 +36,6 @@ type MiddlewareCommand struct {
 }
 
 func (c Config) Validate() error {
-	if c.Version <= 0 {
-		return fmt.Errorf("version must be positive")
-	}
 	if err := validateMiddlewareScope("middleware.project", c.Middleware.Project); err != nil {
 		return err
 	}
@@ -97,8 +93,7 @@ func MergeVars(base, override map[string]string) map[string]string {
 	return merged
 }
 
-const DefaultConfigYAML = `version: 2
-defaults:
+const DefaultConfigYAML = `defaults:
   project:
     labels: []
   task:

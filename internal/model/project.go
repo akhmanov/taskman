@@ -1,7 +1,6 @@
 package model
 
 type ProjectState struct {
-	Version      int               `json:"version" yaml:"version"`
 	Slug         string            `json:"slug" yaml:"slug"`
 	Status       ProjectStatus     `json:"status" yaml:"status"`
 	StatusDetail StatusDetail      `json:"status_detail,omitempty" yaml:"status_detail,omitempty"`
