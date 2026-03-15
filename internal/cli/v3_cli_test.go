@@ -146,6 +146,96 @@ func TestTaskmanV3MessageAddRejectsUnknownKind(t *testing.T) {
 	}
 }
 
+func TestTaskmanV3WorksWithoutTaskmanConfigOverlay(t *testing.T) {
+	root := t.TempDir()
+
+	listOut, err := captureCLIResultV3(t, []string{"taskman", "--root", root, "project", "list"})
+	if err != nil {
+		t.Fatalf("project list without config should work: %v\n%s", err, listOut)
+	}
+	if strings.TrimSpace(listOut) != "" {
+		t.Fatalf("empty runtime should produce no project list output, got %q", listOut)
+	}
+
+	runCLISuccessV3(t, root, "project", "add", "alpha", "--description", "Alpha project")
+	runCLISuccessV3(t, root, "task", "add", "api-auth", "-p", "alpha", "--description", "Implement API auth")
+	runCLISuccessV3(t, root, "project", "plan", "alpha")
+	runCLISuccessV3(t, root, "task", "plan", "api-auth", "-p", "alpha")
+
+	out, err := captureCLIResultV3(t, []string{"taskman", "--root", root, "task", "show", "api-auth", "-p", "alpha"})
+	if err != nil {
+		t.Fatalf("task show without config should work: %v\n%s", err, out)
+	}
+	for _, want := range []string{"Description: Implement API auth", "Status: planned"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("task show without config missing %q: %s", want, out)
+		}
+	}
+	if strings.Contains(out, "No taskman.yaml found") {
+		t.Fatalf("missing config should not be surfaced in runtime output: %s", out)
+	}
+	if _, err := os.Stat(filepath.Join(root, "taskman.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("runtime without overlay should not create taskman.yaml implicitly, stat err=%v", err)
+	}
+}
+
+func TestTaskmanV3FailsWhenExistingConfigOverlayIsInvalid(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "taskman.yaml"), []byte("middleware:\n  project:\n    plan:\n      pre:\n        - name: broken\n"), 0o644); err != nil {
+		t.Fatalf("write invalid config: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(root, "projects", "alpha", "events"), 0o755); err != nil {
+		t.Fatalf("mkdir project events: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "projects", "alpha", "manifest.json"), []byte("{\n  \"id\": \"project-1\",\n  \"kind\": \"project\",\n  \"slug\": \"alpha\",\n  \"name\": \"alpha\",\n  \"description\": \"Alpha project\",\n  \"created_at\": \"2026-03-15T00:00:00Z\"\n}\n"), 0o644); err != nil {
+		t.Fatalf("write project manifest: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "projects", "alpha", "tasks", "api-auth", "events"), 0o755); err != nil {
+		t.Fatalf("mkdir task events: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "projects", "alpha", "tasks", "api-auth", "artifacts"), 0o755); err != nil {
+		t.Fatalf("mkdir task artifacts: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "projects", "alpha", "tasks", "api-auth", "manifest.json"), []byte("{\n  \"id\": \"task-1\",\n  \"kind\": \"task\",\n  \"slug\": \"api-auth\",\n  \"name\": \"api-auth\",\n  \"description\": \"Implement API auth\",\n  \"project_id\": \"project-1\",\n  \"project_slug\": \"alpha\",\n  \"created_at\": \"2026-03-15T00:00:00Z\"\n}\n"), 0o644); err != nil {
+		t.Fatalf("write task manifest: %v", err)
+	}
+
+	for _, args := range [][]string{
+		{"taskman", "--root", root, "project", "list"},
+		{"taskman", "--root", root, "project", "add", "alpha", "--description", "Alpha project"},
+		{"taskman", "--root", root, "project", "message", "list", "alpha"},
+		{"taskman", "--root", root, "project", "update", "alpha", "--label", "ops"},
+		{"taskman", "--root", root, "task", "message", "list", "api-auth", "-p", "alpha"},
+		{"taskman", "--root", root, "task", "update", "api-auth", "-p", "alpha", "--label", "backend"},
+	} {
+		out, err := captureCLIResultV3(t, args)
+		if err == nil {
+			t.Fatalf("invalid existing config should fail for %v, output=%s", args, out)
+		}
+		if !strings.Contains(out+err.Error(), "empty cmd") {
+			t.Fatalf("invalid config failure should mention validation problem for %v, err=%v out=%s", args, err, out)
+		}
+	}
+}
+
+func TestTaskmanV3TransitionWithoutOverlayDoesNotWriteMiddlewareEvents(t *testing.T) {
+	root := t.TempDir()
+
+	runCLISuccessV3(t, root, "project", "add", "alpha", "--description", "Alpha project")
+	runCLISuccessV3(t, root, "project", "plan", "alpha")
+	eventsDir := filepath.Join(root, "projects", "alpha", "events")
+	entries, err := os.ReadDir(eventsDir)
+	if err != nil {
+		t.Fatalf("read project events: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), "middleware_") {
+			t.Fatalf("missing overlay should not emit middleware events, found %s", entry.Name())
+		}
+	}
+}
+
 const minimalTaskmanConfigV3 = `defaults:
   project:
     labels: []

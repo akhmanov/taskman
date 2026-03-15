@@ -60,7 +60,7 @@ func BuildApp() *urfavecli.Command {
 		Name:     "taskman",
 		Usage:    "Append-only project and task workflow for agent-first development",
 		Flags:    []urfavecli.Flag{&urfavecli.StringFlag{Name: "root", Value: ".", Usage: "Path to the runtime root", Sources: urfavecli.EnvVars("TASKMAN_ROOT")}},
-		Commands: []*urfavecli.Command{{Name: "init", Usage: "Create a minimal taskman.yaml", Flags: []urfavecli.Flag{&urfavecli.BoolFlag{Name: "force", Usage: "Overwrite an existing taskman.yaml"}}, Action: initAction}, project, task},
+		Commands: []*urfavecli.Command{{Name: "init", Usage: "Create an optional taskman.yaml overlay", Flags: []urfavecli.Flag{&urfavecli.BoolFlag{Name: "force", Usage: "Overwrite an existing taskman.yaml"}}, Action: initAction}, project, task},
 	}
 }
 
@@ -94,7 +94,7 @@ func initAction(_ context.Context, cmd *urfavecli.Command) error {
 }
 
 func projectsListAction(_ context.Context, cmd *urfavecli.Command) error {
-	if _, err := runtimeStore(cmd).LoadConfig(); err != nil {
+	if _, _, err := runtimeStore(cmd).LoadOptionalConfig(); err != nil {
 		return err
 	}
 	projects, err := runtimeStore(cmd).ListProjects()
@@ -116,7 +116,7 @@ func projectsListAction(_ context.Context, cmd *urfavecli.Command) error {
 }
 
 func tasksListAction(_ context.Context, cmd *urfavecli.Command) error {
-	if _, err := runtimeStore(cmd).LoadConfig(); err != nil {
+	if _, _, err := runtimeStore(cmd).LoadOptionalConfig(); err != nil {
 		return err
 	}
 	tasks, err := runtimeStore(cmd).ListTasks(cmd.String("project"))
@@ -138,7 +138,7 @@ func tasksListAction(_ context.Context, cmd *urfavecli.Command) error {
 }
 
 func projectsShowAction(_ context.Context, cmd *urfavecli.Command) error {
-	if _, err := runtimeStore(cmd).LoadConfig(); err != nil {
+	if _, _, err := runtimeStore(cmd).LoadOptionalConfig(); err != nil {
 		return err
 	}
 	project, err := runtimeStore(cmd).LoadProject(cmd.Args().First())
@@ -203,7 +203,7 @@ func projectsShowAction(_ context.Context, cmd *urfavecli.Command) error {
 }
 
 func tasksShowAction(_ context.Context, cmd *urfavecli.Command) error {
-	if _, err := runtimeStore(cmd).LoadConfig(); err != nil {
+	if _, _, err := runtimeStore(cmd).LoadOptionalConfig(); err != nil {
 		return err
 	}
 	task, err := runtimeStore(cmd).LoadTask(cmd.String("project"), cmd.Args().First())
