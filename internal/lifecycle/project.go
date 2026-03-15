@@ -40,7 +40,7 @@ func (s ProjectService) Create(slug string, input CreateInput) (model.ProjectRec
 	if input.Description == "" {
 		return model.ProjectRecord{}, fmt.Errorf("project description is required")
 	}
-	cfg, err := s.store.LoadConfig()
+	cfg, _, err := s.store.LoadOptionalConfig()
 	if err != nil {
 		return model.ProjectRecord{}, err
 	}
@@ -67,6 +67,9 @@ func (s ProjectService) Create(slug string, input CreateInput) (model.ProjectRec
 }
 
 func (s ProjectService) Update(slug string, labels []string, vars map[string]string, unsetVars []string) (model.ProjectRecord, error) {
+	if _, _, err := s.store.LoadOptionalConfig(); err != nil {
+		return model.ProjectRecord{}, err
+	}
 	record, err := s.store.LoadProject(slug)
 	if err != nil {
 		return model.ProjectRecord{}, err
@@ -86,6 +89,9 @@ func (s ProjectService) Update(slug string, labels []string, vars map[string]str
 }
 
 func (s ProjectService) AddMessage(slug string, input MessageInput) error {
+	if _, _, err := s.store.LoadOptionalConfig(); err != nil {
+		return err
+	}
 	record, err := s.store.LoadProject(slug)
 	if err != nil {
 		return err
@@ -100,6 +106,9 @@ func (s ProjectService) AddMessage(slug string, input MessageInput) error {
 }
 
 func (s ProjectService) GetMessages(slug string) ([]model.Event, error) {
+	if _, _, err := s.store.LoadOptionalConfig(); err != nil {
+		return nil, err
+	}
 	if _, err := s.store.LoadProject(slug); err != nil {
 		return nil, err
 	}
@@ -111,6 +120,9 @@ func (s ProjectService) GetMessages(slug string) ([]model.Event, error) {
 }
 
 func (s ProjectService) GetTransitions(slug string) ([]model.Event, error) {
+	if _, _, err := s.store.LoadOptionalConfig(); err != nil {
+		return nil, err
+	}
 	if _, err := s.store.LoadProject(slug); err != nil {
 		return nil, err
 	}
@@ -145,7 +157,7 @@ func (s ProjectService) Transition(slug, verb string, input TransitionInput) (mo
 		return model.ProjectRecord{}, nil, err
 	}
 	contextPayload := steps.Context{RuntimeRoot: s.store.Root(), Project: steps.ProjectContext{Slug: record.Manifest.Slug, Status: string(record.State.Status), Labels: record.State.Labels, Vars: record.State.Vars}, Transition: verb}
-	cfg, err := s.store.LoadConfig()
+	cfg, _, err := s.store.LoadOptionalConfig()
 	if err != nil {
 		return model.ProjectRecord{}, nil, err
 	}
@@ -189,6 +201,9 @@ func (s ProjectService) Transition(slug, verb string, input TransitionInput) (mo
 }
 
 func (s ProjectService) runProjectMiddleware(slug, entityID, phase, verb string, commands []model.MiddlewareCommand, input steps.Context) (steps.PhaseResult, error) {
+	if len(commands) == 0 {
+		return steps.PhaseResult{OK: true}, nil
+	}
 	startedAt := s.now().UTC().Format(time.RFC3339Nano)
 	if err := s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseStart, At: startedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: true, Message: verb}}); err != nil {
 		return steps.PhaseResult{}, err
