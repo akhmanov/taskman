@@ -36,7 +36,7 @@ func rewriteCLIError(args []string, err error) error {
 		return fmt.Errorf("legacy `tasks` command was removed; use `taskman task ...`")
 	}
 	if strings.Contains(message, "No help topic for") && isLegacyTaskTransitionCommand(args) {
-		return fmt.Errorf("legacy `task transition` command was removed; use `taskman task <start|block|unblock|complete|cancel|close> <task> -p <project>`")
+		return fmt.Errorf("legacy `task transition` command was removed; use `taskman task <plan|start|pause|resume|complete|cancel|reopen> <task> -p <project>`")
 	}
 	if strings.Contains(message, "No help topic for") && isProjectListMisuse(args) {
 		return fmt.Errorf("project list does not accept a project id; use `taskman project show <project>`")
