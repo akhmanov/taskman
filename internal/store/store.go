@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,9 @@ func (s Store) LoadConfig() (model.Config, error) {
 	var cfg model.Config
 	err := readYAML(s.configPath(), &cfg)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return model.Config{}, fmt.Errorf("No taskman.yaml found in %s. Run `taskman --root %s init` first.", s.root, s.root)
+		}
 		return model.Config{}, err
 	}
 

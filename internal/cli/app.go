@@ -197,21 +197,23 @@ func projectsShowAction(_ context.Context, cmd *urfavecli.Command) error {
 		}
 	}
 	for _, warning := range projectWarnings(project, tasks) {
-		if _, err := fmt.Fprintf(os.Stdout, "Warning: %s\n", warning); err != nil {
+		if _, err := fmt.Fprintf(os.Stdout, "Needs attention: %s\n", warning); err != nil {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintln(os.Stdout, "Tasks:"); err != nil {
+	if _, err := fmt.Fprintln(os.Stdout, "Workboard:"); err != nil {
 		return err
 	}
 	buckets := taskBuckets(tasks)
+	hasCollapsedTerminal := false
 	for _, status := range model.CanonicalStatusOrder() {
 		entries := buckets[status]
 		if len(entries) == 0 {
 			continue
 		}
 		if model.IsTerminalStatus(status) && !all {
-			if _, err := fmt.Fprintf(os.Stdout, "%s: %d %s\n", status, len(entries), pluralize(len(entries), "task", "tasks")); err != nil {
+			hasCollapsedTerminal = true
+			if _, err := fmt.Fprintf(os.Stdout, "%s: %d %s hidden\n", status, len(entries), pluralize(len(entries), "task", "tasks")); err != nil {
 				return err
 			}
 			continue
@@ -224,6 +226,11 @@ func projectsShowAction(_ context.Context, cmd *urfavecli.Command) error {
 			if _, err := fmt.Fprintf(os.Stdout, "- %s\n", line); err != nil {
 				return err
 			}
+		}
+	}
+	if hasCollapsedTerminal {
+		if _, err := fmt.Fprintln(os.Stdout, "Use --all to expand done and canceled work."); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -690,10 +697,7 @@ func projectWarnings(project model.ProjectState, tasks []model.TaskState) []stri
 }
 
 func renderProjectSummary(project model.ProjectState, warnings []string) error {
-	if _, err := fmt.Fprintf(os.Stdout, "Project: %s\n", project.Slug); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(os.Stdout, "Status: %s\n", project.Status); err != nil {
+	if _, err := fmt.Fprintf(os.Stdout, "Project %s is now %s.\n", project.Slug, project.Status); err != nil {
 		return err
 	}
 	for _, line := range statusDetailLines(project.StatusDetail) {
@@ -702,7 +706,7 @@ func renderProjectSummary(project model.ProjectState, warnings []string) error {
 		}
 	}
 	for _, warning := range warnings {
-		if _, err := fmt.Fprintf(os.Stdout, "Warning: %s\n", warning); err != nil {
+		if _, err := fmt.Fprintf(os.Stdout, "Needs follow-up: %s\n", warning); err != nil {
 			return err
 		}
 	}
@@ -710,10 +714,7 @@ func renderProjectSummary(project model.ProjectState, warnings []string) error {
 }
 
 func renderTaskSummary(task model.TaskState, warnings []string) error {
-	if _, err := fmt.Fprintf(os.Stdout, "Task: %s/%s\n", task.Project, task.Slug); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(os.Stdout, "Status: %s\n", task.Status); err != nil {
+	if _, err := fmt.Fprintf(os.Stdout, "Task %s/%s is now %s.\n", task.Project, task.Slug, task.Status); err != nil {
 		return err
 	}
 	for _, line := range statusDetailLines(task.StatusDetail) {
@@ -722,7 +723,7 @@ func renderTaskSummary(task model.TaskState, warnings []string) error {
 		}
 	}
 	for _, warning := range warnings {
-		if _, err := fmt.Fprintf(os.Stdout, "Warning: %s\n", warning); err != nil {
+		if _, err := fmt.Fprintf(os.Stdout, "Needs follow-up: %s\n", warning); err != nil {
 			return err
 		}
 	}
@@ -741,7 +742,7 @@ func statusDetailLines(detail model.StatusDetail) []string {
 		lines = append(lines, fmt.Sprintf("Resume When: %s", detail.ResumeWhen))
 	}
 	if detail.Summary != "" {
-		lines = append(lines, fmt.Sprintf("Summary: %s", detail.Summary))
+		lines = append(lines, fmt.Sprintf("Outcome: %s", detail.Summary))
 	}
 	return lines
 }

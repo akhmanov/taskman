@@ -170,9 +170,12 @@ func TestV2ProjectShowGroupsTasksAndCollapsesTerminalBuckets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("project show: %v", err)
 	}
-	assertOrdered(t, out, []string{"in_progress:", "paused:", "planned:", "backlog:", "done: 1 task", "canceled: 1 task"})
+	assertOrdered(t, out, []string{"Workboard:", "in_progress:", "paused:", "planned:", "backlog:", "done: 1 task hidden", "canceled: 1 task hidden"})
 	if !strings.Contains(out, "Waiting for API review") {
 		t.Fatalf("project show should include pause reason: %s", out)
+	}
+	if !strings.Contains(out, "Use --all to expand done and canceled work") {
+		t.Fatalf("project show should explain how to expand terminal groups: %s", out)
 	}
 	for _, forbidden := range []string{"Merged cleanly", "Cut from scope"} {
 		if strings.Contains(out, forbidden) {
@@ -187,6 +190,70 @@ func TestV2ProjectShowGroupsTasksAndCollapsesTerminalBuckets(t *testing.T) {
 	for _, want := range []string{"Merged cleanly", "Cut from scope"} {
 		if !strings.Contains(allOut, want) {
 			t.Fatalf("project show --all missing %q: %s", want, allOut)
+		}
+	}
+}
+
+func TestV2TransitionSummaryUsesActionOrientedCopy(t *testing.T) {
+	root := t.TempDir()
+	writeTaskmanConfig(t, root, postMiddlewareTaskmanConfig)
+	writeCLIExecutable(t, filepath.Join(root, "bin", "post-complete"), "#!/bin/sh\nprintf '{\"ok\":false,\"message\":\"dirty worktree\",\"warnings\":[\"dirty worktree detected\"]}'\n")
+
+	runCLISuccess(t, root, "project", "add", "alpha")
+	runCLISuccess(t, root, "project", "plan", "alpha")
+	runCLISuccess(t, root, "project", "start", "alpha")
+	runCLISuccess(t, root, "task", "add", "done-task", "-p", "alpha")
+	runCLISuccess(t, root, "task", "plan", "done-task", "-p", "alpha")
+	runCLISuccess(t, root, "task", "start", "done-task", "-p", "alpha")
+
+	out, err := captureCLIResult(t, []string{"taskman", "--root", root, "task", "complete", "done-task", "-p", "alpha", "--summary", "Shipped"})
+	if err != nil {
+		t.Fatalf("task complete: %v", err)
+	}
+	for _, want := range []string{
+		"Task alpha/done-task is now done.",
+		"Outcome: Shipped",
+		"Needs follow-up: dirty worktree detected",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("task complete output missing %q: %s", want, out)
+		}
+	}
+}
+
+func TestV2MissingConfigSuggestsTaskmanInit(t *testing.T) {
+	root := t.TempDir()
+	_, err := captureCLIResult(t, []string{"taskman", "--root", root, "project", "list"})
+	if err == nil {
+		t.Fatal("expected project list to fail without taskman.yaml")
+	}
+	for _, want := range []string{
+		"No taskman.yaml found",
+		"Run `taskman --root",
+		"init` first",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing config error should mention %q: %v", want, err)
+		}
+	}
+}
+
+func TestV2BacklogProjectErrorSuggestsNextStep(t *testing.T) {
+	root := t.TempDir()
+	writeTaskmanConfig(t, root, minimalTaskmanConfig)
+	runCLISuccess(t, root, "project", "add", "alpha")
+	runCLISuccess(t, root, "task", "add", "api-auth", "-p", "alpha")
+
+	_, err := captureCLIResult(t, []string{"taskman", "--root", root, "task", "start", "api-auth", "-p", "alpha"})
+	if err == nil {
+		t.Fatal("expected task start to fail while project is backlog")
+	}
+	for _, want := range []string{
+		"Can't start task alpha/api-auth while project alpha is still backlog.",
+		"Move the project to planned or in_progress first.",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("backlog project error should mention %q: %v", want, err)
 		}
 	}
 }

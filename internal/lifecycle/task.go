@@ -27,7 +27,7 @@ func (s TaskService) Create(projectSlug, slug string, labels []string, vars map[
 		return model.TaskState{}, err
 	}
 	if model.IsTerminalStatus(project.Status) {
-		return model.TaskState{}, fmt.Errorf("cannot add task to terminal project %q", project.Status)
+		return model.TaskState{}, fmt.Errorf("Can't add task %s to project %s because the project is %s.", slug, projectSlug, project.Status)
 	}
 	cfg, err := s.store.LoadConfig()
 	if err != nil {
@@ -125,10 +125,10 @@ func (s TaskService) Transition(projectSlug, taskSlug, verb string, input Transi
 		return model.TaskState{}, nil, err
 	}
 	if model.IsTerminalStatus(project.Status) && verb != "cancel" && verb != "reopen" {
-		return model.TaskState{}, nil, fmt.Errorf("cannot run task transition inside terminal project %q", project.Status)
+		return model.TaskState{}, nil, fmt.Errorf("Can't %s task %s/%s because project %s is %s.", verb, projectSlug, taskSlug, projectSlug, project.Status)
 	}
 	if (verb == "start" || verb == "resume") && project.Status == model.StatusBacklog {
-		return model.TaskState{}, nil, fmt.Errorf("cannot %s task while project is backlog", verb)
+		return model.TaskState{}, nil, fmt.Errorf("Can't %s task %s/%s while project %s is still backlog. Move the project to planned or in_progress first.", verb, projectSlug, taskSlug, projectSlug)
 	}
 	spec, err := validateTransitionAllowed(task.Status, verb)
 	if err != nil {
