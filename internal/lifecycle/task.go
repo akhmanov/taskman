@@ -57,6 +57,9 @@ func (s TaskService) Update(projectSlug, taskSlug string, labels []string, vars 
 	if err != nil {
 		return model.TaskRecord{}, err
 	}
+	if err := rejectConflict(record.State); err != nil {
+		return model.TaskRecord{}, err
+	}
 	patch := model.MetadataPatch{VarsSet: vars, VarsUnset: unsetVars}
 	if labels != nil {
 		patch.Labels = append([]string{}, labels...)
@@ -107,6 +110,9 @@ func (s TaskService) GetTransitions(projectSlug, taskSlug string) ([]model.Event
 func (s TaskService) Transition(projectSlug, taskSlug, verb string, input TransitionInput) (model.TaskRecord, []string, error) {
 	task, err := s.store.LoadTask(projectSlug, taskSlug)
 	if err != nil {
+		return model.TaskRecord{}, nil, err
+	}
+	if err := rejectConflict(task.State); err != nil {
 		return model.TaskRecord{}, nil, err
 	}
 	project, err := s.store.LoadProject(projectSlug)
@@ -185,11 +191,15 @@ func (s TaskService) stepContext(project model.ProjectRecord, task model.TaskRec
 
 func (s TaskService) runTaskMiddleware(projectSlug, taskSlug, entityID, phase, verb string, commands []model.MiddlewareCommand, input steps.Context) (steps.PhaseResult, error) {
 	startedAt := s.now().UTC().Format(time.RFC3339Nano)
-	_ = s.store.AppendTaskEvent(projectSlug, taskSlug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseStart, At: startedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: true, Message: verb}})
+	if err := s.store.AppendTaskEvent(projectSlug, taskSlug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseStart, At: startedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: true, Message: verb}}); err != nil {
+		return steps.PhaseResult{}, err
+	}
 	result, err := s.runner.Run(context.Background(), verb, commands, input)
 	finishedAt := s.now().UTC().Format(time.RFC3339Nano)
 	if err != nil {
-		_ = s.store.AppendTaskEvent(projectSlug, taskSlug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseFinish, At: finishedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: false, Message: err.Error()}})
+		if appendErr := s.store.AppendTaskEvent(projectSlug, taskSlug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseFinish, At: finishedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: false, Message: err.Error()}}); appendErr != nil {
+			return steps.PhaseResult{}, appendErr
+		}
 		return steps.PhaseResult{}, err
 	}
 	for _, step := range result.Steps {
@@ -197,8 +207,12 @@ func (s TaskService) runTaskMiddleware(projectSlug, taskSlug, entityID, phase, v
 		for key := range step.Result.Artifacts {
 			artifacts = append(artifacts, key)
 		}
-		_ = s.store.AppendTaskEvent(projectSlug, taskSlug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewareStepFinish, At: finishedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, Step: step.Name, OK: step.Result.OK, Message: step.Result.Message, Warnings: step.Result.Warnings, Artifacts: artifacts}})
+		if err := s.store.AppendTaskEvent(projectSlug, taskSlug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewareStepFinish, At: finishedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, Step: step.Name, OK: step.Result.OK, Message: step.Result.Message, Warnings: step.Result.Warnings, Artifacts: artifacts}}); err != nil {
+			return steps.PhaseResult{}, err
+		}
 	}
-	_ = s.store.AppendTaskEvent(projectSlug, taskSlug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseFinish, At: finishedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: result.OK, Message: lastResultMessage(result), Warnings: collectWarnings(result)}})
+	if err := s.store.AppendTaskEvent(projectSlug, taskSlug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseFinish, At: finishedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: result.OK, Message: lastResultMessage(result), Warnings: collectWarnings(result)}}); err != nil {
+		return steps.PhaseResult{}, err
+	}
 	return result, nil
 }

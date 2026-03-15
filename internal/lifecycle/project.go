@@ -71,6 +71,9 @@ func (s ProjectService) Update(slug string, labels []string, vars map[string]str
 	if err != nil {
 		return model.ProjectRecord{}, err
 	}
+	if err := rejectConflict(record.State); err != nil {
+		return model.ProjectRecord{}, err
+	}
 	patch := model.MetadataPatch{VarsSet: vars, VarsUnset: unsetVars}
 	if labels != nil {
 		patch.Labels = append([]string{}, labels...)
@@ -121,6 +124,9 @@ func (s ProjectService) GetTransitions(slug string) ([]model.Event, error) {
 func (s ProjectService) Transition(slug, verb string, input TransitionInput) (model.ProjectRecord, []string, error) {
 	record, err := s.store.LoadProject(slug)
 	if err != nil {
+		return model.ProjectRecord{}, nil, err
+	}
+	if err := rejectConflict(record.State); err != nil {
 		return model.ProjectRecord{}, nil, err
 	}
 	if verb == "complete" {
@@ -184,11 +190,15 @@ func (s ProjectService) Transition(slug, verb string, input TransitionInput) (mo
 
 func (s ProjectService) runProjectMiddleware(slug, entityID, phase, verb string, commands []model.MiddlewareCommand, input steps.Context) (steps.PhaseResult, error) {
 	startedAt := s.now().UTC().Format(time.RFC3339Nano)
-	_ = s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseStart, At: startedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: true, Message: verb}})
+	if err := s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseStart, At: startedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: true, Message: verb}}); err != nil {
+		return steps.PhaseResult{}, err
+	}
 	result, err := s.runner.Run(context.Background(), verb, commands, input)
 	finishedAt := s.now().UTC().Format(time.RFC3339Nano)
 	if err != nil {
-		_ = s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseFinish, At: finishedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: false, Message: err.Error()}})
+		if appendErr := s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseFinish, At: finishedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: false, Message: err.Error()}}); appendErr != nil {
+			return steps.PhaseResult{}, appendErr
+		}
 		return steps.PhaseResult{}, err
 	}
 	for _, step := range result.Steps {
@@ -196,9 +206,13 @@ func (s ProjectService) runProjectMiddleware(slug, entityID, phase, verb string,
 		for key := range step.Result.Artifacts {
 			artifacts = append(artifacts, key)
 		}
-		_ = s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewareStepFinish, At: finishedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, Step: step.Name, OK: step.Result.OK, Message: step.Result.Message, Warnings: step.Result.Warnings, Artifacts: artifacts}})
+		if err := s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewareStepFinish, At: finishedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, Step: step.Name, OK: step.Result.OK, Message: step.Result.Message, Warnings: step.Result.Warnings, Artifacts: artifacts}}); err != nil {
+			return steps.PhaseResult{}, err
+		}
 	}
-	_ = s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseFinish, At: finishedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: result.OK, Message: lastResultMessage(result), Warnings: collectWarnings(result)}})
+	if err := s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: entityID, Kind: model.EventKindMiddlewarePhaseFinish, At: finishedAt, Actor: "taskman", Middleware: &model.MiddlewareEventData{Phase: phase, OK: result.OK, Message: lastResultMessage(result), Warnings: collectWarnings(result)}}); err != nil {
+		return steps.PhaseResult{}, err
+	}
 	return result, nil
 }
 
@@ -224,6 +238,13 @@ func fallbackName(slug, name string) string {
 		return slug
 	}
 	return name
+}
+
+func rejectConflict(state model.ProjectionState) error {
+	if state.HasConflict() {
+		return fmt.Errorf("entity has unresolved conflict; resolve divergent heads first")
+	}
+	return nil
 }
 
 func newID() string {
