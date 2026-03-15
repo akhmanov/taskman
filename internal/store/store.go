@@ -49,6 +49,11 @@ func (s Store) InitConfig() error {
 }
 
 func (s Store) CreateProject(manifest model.Manifest) error {
+	if _, err := os.Stat(s.projectManifestPath(manifest.Slug)); err == nil {
+		return fmt.Errorf("project %s already exists", manifest.Slug)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Join(s.projectDir(manifest.Slug), "tasks"), 0o755); err != nil {
 		return err
 	}
@@ -59,6 +64,11 @@ func (s Store) CreateProject(manifest model.Manifest) error {
 }
 
 func (s Store) CreateTask(manifest model.Manifest) error {
+	if _, err := os.Stat(s.taskManifestPath(manifest.ProjectSlug, manifest.Slug)); err == nil {
+		return fmt.Errorf("task %s/%s already exists", manifest.ProjectSlug, manifest.Slug)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	if err := os.MkdirAll(s.taskEventsDir(manifest.ProjectSlug, manifest.Slug), 0o755); err != nil {
 		return err
 	}
@@ -134,7 +144,11 @@ func (s Store) LoadProject(slug string) (model.ProjectRecord, error) {
 	if err != nil {
 		return model.ProjectRecord{}, err
 	}
-	return model.ProjectRecord{Manifest: manifest, State: model.ProjectStateFromEvents(events)}, nil
+	state := model.ProjectStateFromEvents(events)
+	if state.UpdatedAt == "" {
+		state.UpdatedAt = manifest.CreatedAt
+	}
+	return model.ProjectRecord{Manifest: manifest, State: state}, nil
 }
 
 func (s Store) LoadTask(projectSlug, taskSlug string) (model.TaskRecord, error) {
@@ -146,7 +160,11 @@ func (s Store) LoadTask(projectSlug, taskSlug string) (model.TaskRecord, error) 
 	if err != nil {
 		return model.TaskRecord{}, err
 	}
-	return model.TaskRecord{Manifest: manifest, State: model.TaskStateFromEvents(events)}, nil
+	state := model.TaskStateFromEvents(events)
+	if state.UpdatedAt == "" {
+		state.UpdatedAt = manifest.CreatedAt
+	}
+	return model.TaskRecord{Manifest: manifest, State: state}, nil
 }
 
 func (s Store) ListProjects() ([]model.ProjectRecord, error) {
