@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestV2InitCreatesMinimalTaskmanConfig(t *testing.T) {
+func TestTaskmanInitCreatesMinimalConfig(t *testing.T) {
 	root := t.TempDir()
 
 	if _, err := captureCLIResult(t, []string{"taskman", "--root", root, "init"}); err != nil {
@@ -21,10 +21,13 @@ func TestV2InitCreatesMinimalTaskmanConfig(t *testing.T) {
 		t.Fatalf("read taskman.yaml: %v", err)
 	}
 	text := string(data)
-	for _, want := range []string{"version: 2", "defaults:", "middleware:"} {
+	for _, want := range []string{"defaults:", "middleware:"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("taskman.yaml missing %q: %s", want, text)
 		}
+	}
+	if strings.Contains(text, "version:") {
+		t.Fatalf("taskman.yaml should not contain schema versioning: %s", text)
 	}
 	if strings.Contains(text, "workflow:") {
 		t.Fatalf("taskman.yaml should not contain workflow config: %s", text)
@@ -34,7 +37,7 @@ func TestV2InitCreatesMinimalTaskmanConfig(t *testing.T) {
 	}
 }
 
-func TestV2HelpExplainsFiltersAndExpansionFlags(t *testing.T) {
+func TestTaskmanHelpExplainsFiltersAndExpansionFlags(t *testing.T) {
 	taskListHelp, err := captureCLIResult(t, []string{"taskman", "task", "list", "--help"})
 	if err != nil {
 		t.Fatalf("task list help: %v", err)
@@ -67,7 +70,7 @@ func TestV2HelpExplainsFiltersAndExpansionFlags(t *testing.T) {
 	}
 }
 
-func TestV2TaskListSupportsCanonicalOrderingAndFilters(t *testing.T) {
+func TestTaskmanTaskListSupportsCanonicalOrderingAndFilters(t *testing.T) {
 	root := t.TempDir()
 	writeTaskmanConfig(t, root, minimalTaskmanConfig)
 	seedProjectWithCanonicalTasks(t, root, "alpha")
@@ -114,7 +117,7 @@ func TestV2TaskListSupportsCanonicalOrderingAndFilters(t *testing.T) {
 	}
 }
 
-func TestV2ProjectListSupportsCanonicalOrderingAndFilters(t *testing.T) {
+func TestTaskmanProjectListSupportsCanonicalOrderingAndFilters(t *testing.T) {
 	root := t.TempDir()
 	writeTaskmanConfig(t, root, minimalTaskmanConfig)
 	runCLISuccess(t, root, "project", "add", "backlog-project")
@@ -161,7 +164,7 @@ func TestV2ProjectListSupportsCanonicalOrderingAndFilters(t *testing.T) {
 	}
 }
 
-func TestV2ProjectShowGroupsTasksAndCollapsesTerminalBuckets(t *testing.T) {
+func TestTaskmanProjectShowGroupsTasksAndCollapsesTerminalBuckets(t *testing.T) {
 	root := t.TempDir()
 	writeTaskmanConfig(t, root, minimalTaskmanConfig)
 	seedProjectWithCanonicalTasks(t, root, "alpha")
@@ -194,7 +197,7 @@ func TestV2ProjectShowGroupsTasksAndCollapsesTerminalBuckets(t *testing.T) {
 	}
 }
 
-func TestV2TransitionSummaryUsesActionOrientedCopy(t *testing.T) {
+func TestTaskmanTransitionSummaryUsesActionOrientedCopy(t *testing.T) {
 	root := t.TempDir()
 	writeTaskmanConfig(t, root, postMiddlewareTaskmanConfig)
 	writeCLIExecutable(t, filepath.Join(root, "bin", "post-complete"), "#!/bin/sh\nprintf '{\"ok\":false,\"message\":\"dirty worktree\",\"warnings\":[\"dirty worktree detected\"]}'\n")
@@ -221,7 +224,7 @@ func TestV2TransitionSummaryUsesActionOrientedCopy(t *testing.T) {
 	}
 }
 
-func TestV2MissingConfigSuggestsTaskmanInit(t *testing.T) {
+func TestTaskmanMissingConfigSuggestsTaskmanInit(t *testing.T) {
 	root := t.TempDir()
 	_, err := captureCLIResult(t, []string{"taskman", "--root", root, "project", "list"})
 	if err == nil {
@@ -238,7 +241,7 @@ func TestV2MissingConfigSuggestsTaskmanInit(t *testing.T) {
 	}
 }
 
-func TestV2BacklogProjectErrorSuggestsNextStep(t *testing.T) {
+func TestTaskmanBacklogProjectErrorSuggestsNextStep(t *testing.T) {
 	root := t.TempDir()
 	writeTaskmanConfig(t, root, minimalTaskmanConfig)
 	runCLISuccess(t, root, "project", "add", "alpha")
@@ -258,7 +261,7 @@ func TestV2BacklogProjectErrorSuggestsNextStep(t *testing.T) {
 	}
 }
 
-func TestV2TransitionMiddlewareSeparatesAuditTrailAndDoesNotRollbackPostFailures(t *testing.T) {
+func TestTaskmanTransitionMiddlewareSeparatesAuditTrailAndDoesNotRollbackPostFailures(t *testing.T) {
 	root := t.TempDir()
 	writeTaskmanConfig(t, root, preMiddlewareTaskmanConfig)
 	writeCLIExecutable(t, filepath.Join(root, "bin", "pre-start"), "#!/bin/sh\nprintf '{\"ok\":false,\"message\":\"branch missing\"}'\n")
@@ -315,7 +318,7 @@ func TestV2TransitionMiddlewareSeparatesAuditTrailAndDoesNotRollbackPostFailures
 	}
 }
 
-func TestV2PostMiddlewareReceivesUpdatedStatusContext(t *testing.T) {
+func TestTaskmanPostMiddlewareReceivesUpdatedStatusContext(t *testing.T) {
 	root := t.TempDir()
 	writeTaskmanConfig(t, root, postStatusCheckConfig)
 	writeCLIExecutable(t, filepath.Join(root, "bin", "check-post-status"), "#!/bin/sh\nif grep -q '\"status\":\"done\"' \"$1\"; then\n  printf '{\"ok\":true,\"message\":\"saw done\"}'\nelse\n  printf '{\"ok\":false,\"message\":\"post saw stale status\"}'\nfi\n")
@@ -335,10 +338,9 @@ func TestV2PostMiddlewareReceivesUpdatedStatusContext(t *testing.T) {
 	}
 }
 
-func TestV2ConfigRejectsUnknownMiddlewareTransitions(t *testing.T) {
+func TestTaskmanConfigRejectsUnknownMiddlewareTransitions(t *testing.T) {
 	root := t.TempDir()
-	writeTaskmanConfig(t, root, `version: 2
-defaults:
+	writeTaskmanConfig(t, root, `defaults:
   project:
     labels: []
   task:
@@ -357,8 +359,30 @@ middleware:
 	}
 }
 
-const minimalTaskmanConfig = `version: 2
-defaults:
+func TestTaskmanStateFilesDoNotPersistSchemaVersionFields(t *testing.T) {
+	root := t.TempDir()
+	writeTaskmanConfig(t, root, minimalTaskmanConfig)
+	runCLISuccess(t, root, "project", "add", "alpha")
+	runCLISuccess(t, root, "task", "add", "api-auth", "-p", "alpha")
+
+	projectState, err := os.ReadFile(filepath.Join(root, "projects", "alpha", "state.yaml"))
+	if err != nil {
+		t.Fatalf("read project state: %v", err)
+	}
+	if strings.Contains(string(projectState), "version:") {
+		t.Fatalf("project state should not contain schema versioning: %s", string(projectState))
+	}
+
+	taskState, err := os.ReadFile(filepath.Join(root, "projects", "alpha", "tasks", "api-auth", "state.yaml"))
+	if err != nil {
+		t.Fatalf("read task state: %v", err)
+	}
+	if strings.Contains(string(taskState), "version:") {
+		t.Fatalf("task state should not contain schema versioning: %s", string(taskState))
+	}
+}
+
+const minimalTaskmanConfig = `defaults:
   project:
     labels: []
   task:
@@ -368,8 +392,7 @@ middleware:
   task: {}
 `
 
-const preMiddlewareTaskmanConfig = `version: 2
-defaults:
+const preMiddlewareTaskmanConfig = `defaults:
   project:
     labels: []
   task:
@@ -383,8 +406,7 @@ middleware:
           cmd: [./bin/pre-start]
 `
 
-const postMiddlewareTaskmanConfig = `version: 2
-defaults:
+const postMiddlewareTaskmanConfig = `defaults:
   project:
     labels: []
   task:
@@ -398,8 +420,7 @@ middleware:
           cmd: [./bin/post-complete]
 `
 
-const postStatusCheckConfig = `version: 2
-defaults:
+const postStatusCheckConfig = `defaults:
   project:
     labels: []
   task:
