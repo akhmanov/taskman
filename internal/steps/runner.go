@@ -22,7 +22,7 @@ func New(workDir string) Runner {
 	return Runner{workDir: workDir}
 }
 
-func (r Runner) Run(ctx context.Context, transition string, steps []model.Step, input Context) (PhaseResult, error) {
+func (r Runner) Run(ctx context.Context, transition string, commands []model.MiddlewareCommand, input Context) (PhaseResult, error) {
 	result := PhaseResult{OK: true}
 	input.Transition = transition
 
@@ -32,22 +32,18 @@ func (r Runner) Run(ctx context.Context, transition string, steps []model.Step, 
 	}
 	defer os.Remove(inputPath)
 
-	for _, step := range steps {
-		if !matchesWhen(step.When, input) {
-			continue
-		}
-
-		runResult, runErr := r.runStep(ctx, step, map[string]string{
+	for _, command := range commands {
+		runResult, runErr := r.runStep(ctx, command, map[string]string{
 			"input_json_path": inputPath,
 		})
 		if runErr != nil {
 			return PhaseResult{}, runErr
 		}
 
-		result.Steps = append(result.Steps, StepExecution{Name: step.Name, Result: runResult})
+		result.Steps = append(result.Steps, StepExecution{Name: command.Name, Result: runResult})
 		if !runResult.OK {
 			result.OK = false
-			result.FailedStep = step.Name
+			result.FailedStep = command.Name
 			break
 		}
 	}
@@ -55,9 +51,9 @@ func (r Runner) Run(ctx context.Context, transition string, steps []model.Step, 
 	return result, nil
 }
 
-func (r Runner) runStep(ctx context.Context, step model.Step, vars map[string]string) (Result, error) {
-	args := make([]string, 0, len(step.Cmd))
-	for _, part := range step.Cmd {
+func (r Runner) runStep(ctx context.Context, command model.MiddlewareCommand, vars map[string]string) (Result, error) {
+	args := make([]string, 0, len(command.Cmd))
+	for _, part := range command.Cmd {
 		rendered, err := render(part, vars)
 		if err != nil {
 			return Result{}, err
@@ -66,7 +62,7 @@ func (r Runner) runStep(ctx context.Context, step model.Step, vars map[string]st
 	}
 
 	if len(args) == 0 {
-		return Result{}, fmt.Errorf("step %q has empty command", step.Name)
+		return Result{}, fmt.Errorf("middleware %q has empty command", command.Name)
 	}
 
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
@@ -84,7 +80,7 @@ func (r Runner) runStep(ctx context.Context, step model.Step, vars map[string]st
 		if err != nil {
 			return Result{OK: false, Message: strings.TrimSpace(stderr.String())}, nil
 		}
-		return Result{}, fmt.Errorf("decode result for %q: %w", step.Name, decodeErr)
+		return Result{}, fmt.Errorf("decode result for %q: %w", command.Name, decodeErr)
 	}
 
 	if err != nil && result.Message == "" {
@@ -129,49 +125,4 @@ func render(source string, vars map[string]string) (string, error) {
 	}
 
 	return out.String(), nil
-}
-
-func matchesWhen(selectors map[string]string, input Context) bool {
-	if len(selectors) == 0 {
-		return true
-	}
-
-	for key, expected := range selectors {
-		switch {
-		case strings.HasPrefix(key, "task.vars."):
-			name := strings.TrimPrefix(key, "task.vars.")
-			if input.Task.Vars[name] != expected {
-				return false
-			}
-		case strings.HasPrefix(key, "project.vars."):
-			name := strings.TrimPrefix(key, "project.vars.")
-			if input.Project.Vars[name] != expected {
-				return false
-			}
-		case key == "task.status":
-			if input.Task.Status != expected {
-				return false
-			}
-		case key == "project.status":
-			if input.Project.Status != expected {
-				return false
-			}
-		case key == "task.slug":
-			if input.Task.Slug != expected {
-				return false
-			}
-		case key == "project.slug":
-			if input.Project.Slug != expected {
-				return false
-			}
-		case key == "transition":
-			if input.Transition != expected {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-
-	return true
 }
