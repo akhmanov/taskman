@@ -87,3 +87,46 @@ func TestLoadOptionalConfigHandlesMissingAndInvalidFiles(t *testing.T) {
 		t.Fatalf("invalid existing config should fail and report present=true, err=%v present=%v", err, present)
 	}
 }
+
+func TestCreateProjectAndTaskUseCanonicalNumberedPaths(t *testing.T) {
+	root := t.TempDir()
+	s := New(root)
+
+	project := model.Manifest{ID: "project-25", Kind: model.EntityKindProject, Number: 25, Slug: "alpha", Name: "alpha", Description: "Alpha project", CreatedAt: "2026-03-15T00:00:00Z"}
+	if err := s.CreateProject(project); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	task := model.Manifest{ID: "task-1", Kind: model.EntityKindTask, Number: 1, Slug: "api-auth", Name: "api-auth", Description: "Implement API auth", ProjectID: project.ID, ProjectSlug: project.Slug, CreatedAt: "2026-03-15T00:01:00Z"}
+	if err := s.CreateTask(task); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	for _, path := range []string{
+		filepath.Join(root, "projects", "25_alpha", "manifest.json"),
+		filepath.Join(root, "projects", "25_alpha", "tasks", "1_api-auth", "manifest.json"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected numbered path %s: %v", path, err)
+		}
+	}
+}
+
+func TestLoadProjectAcceptsCompositeNumberAndSlugRefs(t *testing.T) {
+	root := t.TempDir()
+	s := New(root)
+
+	project := model.Manifest{ID: "project-25", Kind: model.EntityKindProject, Number: 25, Slug: "alpha", Name: "alpha", Description: "Alpha project", CreatedAt: "2026-03-15T00:00:00Z"}
+	if err := s.CreateProject(project); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	for _, ref := range []string{"25_alpha", "25", "alpha"} {
+		loaded, err := s.LoadProject(ref)
+		if err != nil {
+			t.Fatalf("load project %s: %v", ref, err)
+		}
+		if loaded.Manifest.Number != 25 || loaded.Manifest.Slug != "alpha" {
+			t.Fatalf("load project %s = %#v", ref, loaded.Manifest)
+		}
+	}
+}

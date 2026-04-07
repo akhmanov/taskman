@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,11 +22,13 @@ func BuildApp() *urfavecli.Command {
 		Usage: "Manage projects",
 		Commands: []*urfavecli.Command{
 			{Name: "list", Usage: "List projects in canonical status order", Flags: listFlags(false), Action: projectsListAction},
-			{Name: "show", Usage: "Show a project workboard", ArgsUsage: "<project>", Action: projectsShowAction},
+			{Name: "show", Usage: "Show a project workboard", ArgsUsage: "<project>", Flags: []urfavecli.Flag{outputFlag()}, Action: projectsShowAction},
 			{Name: "add", Usage: "Create a project manifest", ArgsUsage: "<project>", Flags: createFlags(), Action: projectsAddAction},
+			{Name: "rename", Usage: "Rename a project slug", ArgsUsage: "<project> <new-slug>", Action: projectsRenameAction},
 			{Name: "update", Usage: "Append project metadata changes", ArgsUsage: "<project>", Flags: updateFlags(), Action: projectsUpdateAction},
-			{Name: "message", Usage: "Manage project messages", Commands: []*urfavecli.Command{{Name: "add", Usage: "Add project message", ArgsUsage: "<project>", Flags: messageFlags(), Action: projectsMessageAddAction}, {Name: "list", Usage: "List project messages", ArgsUsage: "<project>", Action: projectsMessageListAction}}},
-			{Name: "transition", Usage: "Inspect project transitions", Commands: []*urfavecli.Command{{Name: "list", Usage: "List project transitions", ArgsUsage: "<project>", Action: projectsTransitionListAction}}},
+			{Name: "label", Usage: "Manage project labels", Commands: []*urfavecli.Command{{Name: "add", Usage: "Add project labels", ArgsUsage: "<project> <label...>", Action: projectsLabelAddAction}, {Name: "remove", Usage: "Remove project labels", ArgsUsage: "<project> <label...>", Action: projectsLabelRemoveAction}}},
+			{Name: "message", Usage: "Manage project messages", Commands: []*urfavecli.Command{{Name: "add", Usage: "Add project message", ArgsUsage: "<project>", Flags: messageFlags(), Action: projectsMessageAddAction}, {Name: "list", Usage: "List project messages", ArgsUsage: "<project>", Flags: []urfavecli.Flag{outputFlag()}, Action: projectsMessageListAction}}},
+			{Name: "transition", Usage: "Inspect project transitions", Commands: []*urfavecli.Command{{Name: "list", Usage: "List project transitions", ArgsUsage: "<project>", Flags: []urfavecli.Flag{outputFlag()}, Action: projectsTransitionListAction}}},
 			{Name: "plan", Usage: "Move project to planned", ArgsUsage: "<project>", Action: projectTransitionAction("plan")},
 			{Name: "start", Usage: "Move project to in_progress", ArgsUsage: "<project>", Action: projectTransitionAction("start")},
 			{Name: "pause", Usage: "Pause a project", ArgsUsage: "<project>", Flags: pauseFlags(), Action: projectTransitionAction("pause")},
@@ -41,11 +44,13 @@ func BuildApp() *urfavecli.Command {
 		Usage: "Manage tasks",
 		Commands: []*urfavecli.Command{
 			{Name: "list", Usage: "List tasks in canonical status order", Flags: append([]urfavecli.Flag{projectFlag()}, listFlags(true)...), Action: tasksListAction},
-			{Name: "show", Usage: "Show a task card", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: tasksShowAction},
+			{Name: "show", Usage: "Show a task card", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag(), outputFlag()}, Action: tasksShowAction},
 			{Name: "add", Usage: "Create a task manifest", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, createFlags()...), Action: tasksAddAction},
+			{Name: "rename", Usage: "Rename a task slug", ArgsUsage: "<task> <new-slug>", Flags: []urfavecli.Flag{projectFlag()}, Action: tasksRenameAction},
 			{Name: "update", Usage: "Append task metadata changes", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, updateFlags()...), Action: tasksUpdateAction},
-			{Name: "message", Usage: "Manage task messages", Commands: []*urfavecli.Command{{Name: "add", Usage: "Add task message", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, messageFlags()...), Action: tasksMessageAddAction}, {Name: "list", Usage: "List task messages", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: tasksMessageListAction}}},
-			{Name: "transition", Usage: "Inspect task transitions", Commands: []*urfavecli.Command{{Name: "list", Usage: "List task transitions", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: tasksTransitionListAction}}},
+			{Name: "label", Usage: "Manage task labels", Commands: []*urfavecli.Command{{Name: "add", Usage: "Add task labels", ArgsUsage: "<task> <label...>", Flags: []urfavecli.Flag{projectFlag()}, Action: tasksLabelAddAction}, {Name: "remove", Usage: "Remove task labels", ArgsUsage: "<task> <label...>", Flags: []urfavecli.Flag{projectFlag()}, Action: tasksLabelRemoveAction}}},
+			{Name: "message", Usage: "Manage task messages", Commands: []*urfavecli.Command{{Name: "add", Usage: "Add task message", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, messageFlags()...), Action: tasksMessageAddAction}, {Name: "list", Usage: "List task messages", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag(), outputFlag()}, Action: tasksMessageListAction}}},
+			{Name: "transition", Usage: "Inspect task transitions", Commands: []*urfavecli.Command{{Name: "list", Usage: "List task transitions", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag(), outputFlag()}, Action: tasksTransitionListAction}}},
 			{Name: "plan", Usage: "Move task to planned", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: taskTransitionAction("plan")},
 			{Name: "start", Usage: "Move task to in_progress", ArgsUsage: "<task>", Flags: []urfavecli.Flag{projectFlag()}, Action: taskTransitionAction("start")},
 			{Name: "pause", Usage: "Pause a task", ArgsUsage: "<task>", Flags: append([]urfavecli.Flag{projectFlag()}, pauseFlags()...), Action: taskTransitionAction("pause")},
@@ -105,10 +110,15 @@ func projectsListAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	projects = filterProjects(projects, include, exclude)
+	projects = filterProjects(projects, include, exclude, listLabelFilters(cmd))
 	sortProjects(projects)
+	if jsonOutput, err := wantsJSON(cmd); err != nil {
+		return err
+	} else if jsonOutput {
+		return renderJSON(projectListJSON(projects))
+	}
 	for _, project := range projects {
-		if _, err := fmt.Fprintf(os.Stdout, "%s\t%s\n", project.State.Status, project.Manifest.Slug); err != nil {
+		if _, err := fmt.Fprintf(os.Stdout, "%s\t%s\n", project.State.Status, project.Manifest.Ref()); err != nil {
 			return err
 		}
 	}
@@ -127,10 +137,15 @@ func tasksListAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	tasks = filterTasks(tasks, include, exclude)
+	tasks = filterTasks(tasks, include, exclude, listLabelFilters(cmd))
 	sortTasks(tasks)
+	if jsonOutput, err := wantsJSON(cmd); err != nil {
+		return err
+	} else if jsonOutput {
+		return renderJSON(taskListJSON(tasks))
+	}
 	for _, task := range tasks {
-		if _, err := fmt.Fprintf(os.Stdout, "%s\t%s/%s\n", task.State.Status, task.Manifest.ProjectSlug, task.Manifest.Slug); err != nil {
+		if _, err := fmt.Fprintf(os.Stdout, "%s\t%s/%s\n", task.State.Status, task.Manifest.ProjectRef(), task.Manifest.Ref()); err != nil {
 			return err
 		}
 	}
@@ -154,7 +169,12 @@ func projectsShowAction(_ context.Context, cmd *urfavecli.Command) error {
 		return err
 	}
 	sortTasks(tasks)
-	if _, err := fmt.Fprintf(os.Stdout, "Project: %s\n", project.Manifest.Slug); err != nil {
+	if jsonOutput, err := wantsJSON(cmd); err != nil {
+		return err
+	} else if jsonOutput {
+		return renderJSON(projectShowJSON{Project: projectJSON(project), Tasks: taskListJSON(tasks), Messages: messages, Warnings: projectWarnings(project, tasks)})
+	}
+	if _, err := fmt.Fprintf(os.Stdout, "Project: %s\n", project.Manifest.Ref()); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(os.Stdout, "Name: %s\n", project.Manifest.Name); err != nil {
@@ -165,6 +185,11 @@ func projectsShowAction(_ context.Context, cmd *urfavecli.Command) error {
 	}
 	if _, err := fmt.Fprintf(os.Stdout, "Status: %s\n", project.State.Status); err != nil {
 		return err
+	}
+	if len(project.State.Labels) > 0 {
+		if _, err := fmt.Fprintf(os.Stdout, "Labels: %s\n", strings.Join(project.State.Labels, ", ")); err != nil {
+			return err
+		}
 	}
 	for _, warning := range projectWarnings(project, tasks) {
 		if _, err := fmt.Fprintf(os.Stdout, "Needs attention: %s\n", warning); err != nil {
@@ -184,7 +209,7 @@ func projectsShowAction(_ context.Context, cmd *urfavecli.Command) error {
 			return err
 		}
 		for _, task := range entries {
-			if _, err := fmt.Fprintf(os.Stdout, "- %s\n", task.Manifest.Slug); err != nil {
+			if _, err := fmt.Fprintf(os.Stdout, "- %s\n", task.Manifest.Ref()); err != nil {
 				return err
 			}
 		}
@@ -222,7 +247,12 @@ func tasksShowAction(_ context.Context, cmd *urfavecli.Command) error {
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(os.Stdout, "Task: %s/%s\n", task.Manifest.ProjectSlug, task.Manifest.Slug); err != nil {
+	if jsonOutput, err := wantsJSON(cmd); err != nil {
+		return err
+	} else if jsonOutput {
+		return renderJSON(taskShowJSON{Task: taskJSON(task), Project: projectJSON(project), Transitions: transitions, Messages: messages})
+	}
+	if _, err := fmt.Fprintf(os.Stdout, "Task: %s/%s\n", task.Manifest.ProjectRef(), task.Manifest.Ref()); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(os.Stdout, "Name: %s\n", task.Manifest.Name); err != nil {
@@ -291,6 +321,18 @@ func projectsAddAction(_ context.Context, cmd *urfavecli.Command) error {
 	return renderProjectSummary(project, nil)
 }
 
+func projectsRenameAction(_ context.Context, cmd *urfavecli.Command) error {
+	target, newSlug, err := renameArgs(cmd)
+	if err != nil {
+		return err
+	}
+	project, err := projectService(cmd).Rename(target, newSlug)
+	if err != nil {
+		return err
+	}
+	return renderProjectSummary(project, nil)
+}
+
 func projectsUpdateAction(_ context.Context, cmd *urfavecli.Command) error {
 	vars, err := parseVars(cmd.StringSlice("var"))
 	if err != nil {
@@ -315,12 +357,72 @@ func tasksAddAction(_ context.Context, cmd *urfavecli.Command) error {
 	return renderTaskSummary(task, nil)
 }
 
+func tasksRenameAction(_ context.Context, cmd *urfavecli.Command) error {
+	target, newSlug, err := renameArgs(cmd)
+	if err != nil {
+		return err
+	}
+	task, err := taskService(cmd).Rename(cmd.String("project"), target, newSlug)
+	if err != nil {
+		return err
+	}
+	return renderTaskSummary(task, nil)
+}
+
 func tasksUpdateAction(_ context.Context, cmd *urfavecli.Command) error {
 	vars, err := parseVars(cmd.StringSlice("var"))
 	if err != nil {
 		return err
 	}
 	task, err := taskService(cmd).Update(cmd.String("project"), cmd.Args().First(), optionalLabels(cmd), vars, cmd.StringSlice("unset-var"))
+	if err != nil {
+		return err
+	}
+	return renderTaskSummary(task, nil)
+}
+
+func projectsLabelAddAction(_ context.Context, cmd *urfavecli.Command) error {
+	target, labels, err := commandLabels(cmd)
+	if err != nil {
+		return err
+	}
+	project, err := projectService(cmd).AddLabels(target, labels)
+	if err != nil {
+		return err
+	}
+	return renderProjectSummary(project, nil)
+}
+
+func projectsLabelRemoveAction(_ context.Context, cmd *urfavecli.Command) error {
+	target, labels, err := commandLabels(cmd)
+	if err != nil {
+		return err
+	}
+	project, err := projectService(cmd).RemoveLabels(target, labels)
+	if err != nil {
+		return err
+	}
+	return renderProjectSummary(project, nil)
+}
+
+func tasksLabelAddAction(_ context.Context, cmd *urfavecli.Command) error {
+	target, labels, err := commandLabels(cmd)
+	if err != nil {
+		return err
+	}
+	task, err := taskService(cmd).AddLabels(cmd.String("project"), target, labels)
+	if err != nil {
+		return err
+	}
+	return renderTaskSummary(task, nil)
+}
+
+func tasksLabelRemoveAction(_ context.Context, cmd *urfavecli.Command) error {
+	target, labels, err := commandLabels(cmd)
+	if err != nil {
+		return err
+	}
+	task, err := taskService(cmd).RemoveLabels(cmd.String("project"), target, labels)
 	if err != nil {
 		return err
 	}
@@ -347,12 +449,22 @@ func projectsMessageListAction(_ context.Context, cmd *urfavecli.Command) error 
 	if err != nil {
 		return err
 	}
+	if jsonOutput, err := wantsJSON(cmd); err != nil {
+		return err
+	} else if jsonOutput {
+		return renderJSON(messages)
+	}
 	return renderMessages(messages)
 }
 func tasksMessageListAction(_ context.Context, cmd *urfavecli.Command) error {
 	messages, err := taskService(cmd).GetMessages(cmd.String("project"), cmd.Args().First())
 	if err != nil {
 		return err
+	}
+	if jsonOutput, err := wantsJSON(cmd); err != nil {
+		return err
+	} else if jsonOutput {
+		return renderJSON(messages)
 	}
 	return renderMessages(messages)
 }
@@ -362,12 +474,22 @@ func projectsTransitionListAction(_ context.Context, cmd *urfavecli.Command) err
 	if err != nil {
 		return err
 	}
+	if jsonOutput, err := wantsJSON(cmd); err != nil {
+		return err
+	} else if jsonOutput {
+		return renderJSON(transitions)
+	}
 	return renderTransitions(transitions)
 }
 func tasksTransitionListAction(_ context.Context, cmd *urfavecli.Command) error {
 	transitions, err := taskService(cmd).GetTransitions(cmd.String("project"), cmd.Args().First())
 	if err != nil {
 		return err
+	}
+	if jsonOutput, err := wantsJSON(cmd); err != nil {
+		return err
+	} else if jsonOutput {
+		return renderJSON(transitions)
 	}
 	return renderTransitions(transitions)
 }
@@ -399,7 +521,7 @@ func updateFlags() []urfavecli.Flag {
 	return append(flags, &urfavecli.StringSliceFlag{Name: "unset-var"})
 }
 func projectFlag() urfavecli.Flag {
-	return &urfavecli.StringFlag{Name: "project", Aliases: []string{"p"}, Usage: "Project slug for the task command", Required: true}
+	return &urfavecli.StringFlag{Name: "project", Aliases: []string{"p"}, Usage: "Project ref for the task command", Required: true}
 }
 func pauseFlags() []urfavecli.Flag {
 	return []urfavecli.Flag{&urfavecli.StringFlag{Name: "reason-type"}, &urfavecli.StringFlag{Name: "reason"}, &urfavecli.StringFlag{Name: "resume-when"}}
@@ -414,7 +536,11 @@ func messageFlags() []urfavecli.Flag {
 	return []urfavecli.Flag{&urfavecli.StringFlag{Name: "actor", Value: "taskman"}, &urfavecli.StringFlag{Name: "kind", Value: string(model.MessageKindComment)}, &urfavecli.StringFlag{Name: "body", Required: true}}
 }
 func listFlags(projectRequired bool) []urfavecli.Flag {
-	return []urfavecli.Flag{&urfavecli.StringFlag{Name: "status", Usage: "Include only these statuses (comma-separated)"}, &urfavecli.StringFlag{Name: "exclude-status", Usage: "Hide these statuses (comma-separated)"}, &urfavecli.BoolFlag{Name: "active", Usage: "Shortcut for --exclude-status done,canceled"}}
+	return []urfavecli.Flag{&urfavecli.StringFlag{Name: "status", Usage: "Include only these statuses (comma-separated)"}, &urfavecli.StringFlag{Name: "exclude-status", Usage: "Hide these statuses (comma-separated)"}, &urfavecli.StringSliceFlag{Name: "label", Usage: "Include entries matching any of these labels"}, &urfavecli.StringFlag{Name: "output", Value: "text", Usage: "Output format: text or json"}, &urfavecli.BoolFlag{Name: "active", Usage: "Shortcut for --exclude-status done,canceled"}}
+}
+
+func outputFlag() urfavecli.Flag {
+	return &urfavecli.StringFlag{Name: "output", Value: "text", Usage: "Output format: text or json"}
 }
 
 func parseVars(raw []string) (map[string]string, error) {
@@ -466,7 +592,11 @@ func listStatusFilters(cmd *urfavecli.Command) ([]model.Status, []model.Status, 
 	return include, exclude, nil
 }
 
-func filterTasks(tasks []model.TaskRecord, include, exclude []model.Status) []model.TaskRecord {
+func listLabelFilters(cmd *urfavecli.Command) []string {
+	return model.NormalizeLabels(cmd.StringSlice("label"))
+}
+
+func filterTasks(tasks []model.TaskRecord, include, exclude []model.Status, labels []string) []model.TaskRecord {
 	includeSet := makeStatusSet(include)
 	excludeSet := makeStatusSet(exclude)
 	filtered := make([]model.TaskRecord, 0, len(tasks))
@@ -479,11 +609,14 @@ func filterTasks(tasks []model.TaskRecord, include, exclude []model.Status) []mo
 		if _, ok := excludeSet[task.State.Status]; ok {
 			continue
 		}
+		if !model.HasAnyLabel(task.State.Labels, labels) {
+			continue
+		}
 		filtered = append(filtered, task)
 	}
 	return filtered
 }
-func filterProjects(projects []model.ProjectRecord, include, exclude []model.Status) []model.ProjectRecord {
+func filterProjects(projects []model.ProjectRecord, include, exclude []model.Status, labels []string) []model.ProjectRecord {
 	includeSet := makeStatusSet(include)
 	excludeSet := makeStatusSet(exclude)
 	filtered := make([]model.ProjectRecord, 0, len(projects))
@@ -496,9 +629,42 @@ func filterProjects(projects []model.ProjectRecord, include, exclude []model.Sta
 		if _, ok := excludeSet[project.State.Status]; ok {
 			continue
 		}
+		if !model.HasAnyLabel(project.State.Labels, labels) {
+			continue
+		}
 		filtered = append(filtered, project)
 	}
 	return filtered
+}
+
+func commandLabels(cmd *urfavecli.Command) (string, []string, error) {
+	if !cmd.Args().Present() {
+		return "", nil, fmt.Errorf("target is required")
+	}
+	target := cmd.Args().First()
+	labels := cmd.Args().Tail()
+	if len(labels) == 0 {
+		return "", nil, fmt.Errorf("at least one label is required")
+	}
+	return target, labels, nil
+}
+
+func renameArgs(cmd *urfavecli.Command) (string, string, error) {
+	if cmd.Args().Len() < 2 {
+		return "", "", fmt.Errorf("target and new slug are required")
+	}
+	return cmd.Args().Get(0), cmd.Args().Get(1), nil
+}
+
+func wantsJSON(cmd *urfavecli.Command) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(cmd.String("output"))) {
+	case "", "text":
+		return false, nil
+	case "json":
+		return true, nil
+	default:
+		return false, fmt.Errorf("unknown output format %q", cmd.String("output"))
+	}
 }
 
 func makeStatusSet(statuses []model.Status) map[model.Status]struct{} {
@@ -510,8 +676,8 @@ func makeStatusSet(statuses []model.Status) map[model.Status]struct{} {
 }
 func sortTasks(tasks []model.TaskRecord) {
 	sort.Slice(tasks, func(i, j int) bool {
-		left, right := model.StatusSortIndex(tasks[i].State.Status), model.StatusSortIndex(tasks[j].State.Status)
-		if left != right {
+		left, right := tasks[i].Manifest.Number, tasks[j].Manifest.Number
+		if left > 0 && right > 0 && left != right {
 			return left < right
 		}
 		if tasks[i].State.UpdatedAt != tasks[j].State.UpdatedAt {
@@ -522,8 +688,8 @@ func sortTasks(tasks []model.TaskRecord) {
 }
 func sortProjects(projects []model.ProjectRecord) {
 	sort.Slice(projects, func(i, j int) bool {
-		left, right := model.StatusSortIndex(projects[i].State.Status), model.StatusSortIndex(projects[j].State.Status)
-		if left != right {
+		left, right := projects[i].Manifest.Number, projects[j].Manifest.Number
+		if left > 0 && right > 0 && left != right {
 			return left < right
 		}
 		if projects[i].State.UpdatedAt != projects[j].State.UpdatedAt {
@@ -564,7 +730,7 @@ func projectWarnings(project model.ProjectRecord, tasks []model.TaskRecord) []st
 }
 
 func renderProjectSummary(project model.ProjectRecord, warnings []string) error {
-	if _, err := fmt.Fprintf(os.Stdout, "Project %s is now %s.\n", project.Manifest.Slug, project.State.Status); err != nil {
+	if _, err := fmt.Fprintf(os.Stdout, "Project %s is now %s.\n", project.Manifest.Ref(), project.State.Status); err != nil {
 		return err
 	}
 	for _, line := range statusDetailLines(project.State.StatusDetail) {
@@ -580,7 +746,7 @@ func renderProjectSummary(project model.ProjectRecord, warnings []string) error 
 	return nil
 }
 func renderTaskSummary(task model.TaskRecord, warnings []string) error {
-	if _, err := fmt.Fprintf(os.Stdout, "Task %s/%s is now %s.\n", task.Manifest.ProjectSlug, task.Manifest.Slug, task.State.Status); err != nil {
+	if _, err := fmt.Fprintf(os.Stdout, "Task %s/%s is now %s.\n", task.Manifest.ProjectRef(), task.Manifest.Ref(), task.State.Status); err != nil {
 		return err
 	}
 	for _, line := range statusDetailLines(task.State.StatusDetail) {
@@ -603,6 +769,77 @@ func renderMessages(messages []model.Event) error {
 		}
 	}
 	return nil
+}
+
+func renderJSON(value any) error {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	_, err = os.Stdout.Write(data)
+	return err
+}
+
+type projectRecordJSON struct {
+	Ref    string       `json:"ref"`
+	Number int          `json:"number"`
+	Slug   string       `json:"slug"`
+	Name   string       `json:"name"`
+	Status model.Status `json:"status"`
+	Labels []string     `json:"labels,omitempty"`
+}
+
+type taskRecordJSON struct {
+	Ref           string            `json:"ref"`
+	ProjectRef    string            `json:"project_ref"`
+	Number        int               `json:"number"`
+	ProjectNumber int               `json:"project_number"`
+	Slug          string            `json:"slug"`
+	ProjectSlug   string            `json:"project_slug"`
+	Name          string            `json:"name"`
+	Description   string            `json:"description"`
+	Status        model.Status      `json:"status"`
+	Labels        []string          `json:"labels,omitempty"`
+	Vars          map[string]string `json:"vars,omitempty"`
+}
+
+type projectShowJSON struct {
+	Project  projectRecordJSON `json:"project"`
+	Tasks    []taskRecordJSON  `json:"tasks,omitempty"`
+	Messages []model.Event     `json:"messages,omitempty"`
+	Warnings []string          `json:"warnings,omitempty"`
+}
+
+type taskShowJSON struct {
+	Task        taskRecordJSON    `json:"task"`
+	Project     projectRecordJSON `json:"project"`
+	Transitions []model.Event     `json:"transitions,omitempty"`
+	Messages    []model.Event     `json:"messages,omitempty"`
+}
+
+func projectJSON(project model.ProjectRecord) projectRecordJSON {
+	return projectRecordJSON{Ref: project.Manifest.Ref(), Number: project.Manifest.Number, Slug: project.Manifest.Slug, Name: project.Manifest.Name, Status: project.State.Status, Labels: append([]string{}, project.State.Labels...)}
+}
+
+func taskJSON(task model.TaskRecord) taskRecordJSON {
+	return taskRecordJSON{Ref: task.Manifest.Ref(), ProjectRef: task.Manifest.ProjectRef(), Number: task.Manifest.Number, ProjectNumber: task.Manifest.ProjectNumber, Slug: task.Manifest.Slug, ProjectSlug: task.Manifest.ProjectSlug, Name: task.Manifest.Name, Description: task.Manifest.Description, Status: task.State.Status, Labels: append([]string{}, task.State.Labels...), Vars: task.State.Vars}
+}
+
+func projectListJSON(projects []model.ProjectRecord) []projectRecordJSON {
+	items := make([]projectRecordJSON, 0, len(projects))
+	for _, project := range projects {
+		items = append(items, projectJSON(project))
+	}
+	return items
+}
+
+func taskListJSON(tasks []model.TaskRecord) []taskRecordJSON {
+	items := make([]taskRecordJSON, 0, len(tasks))
+	for _, task := range tasks {
+		items = append(items, taskJSON(task))
+	}
+	return items
 }
 func renderTransitions(transitions []model.Event) error {
 	for _, event := range transitions {

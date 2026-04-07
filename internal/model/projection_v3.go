@@ -148,7 +148,7 @@ func applyChain(state *ProjectionState, chain []Event) {
 				continue
 			}
 			if event.MetadataPatch.Labels != nil {
-				state.Labels = append([]string{}, event.MetadataPatch.Labels...)
+				state.Labels = NormalizeLabels(event.MetadataPatch.Labels)
 			}
 			if state.Vars == nil {
 				state.Vars = map[string]string{}

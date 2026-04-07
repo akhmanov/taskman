@@ -37,14 +37,19 @@ func (s TaskService) Create(projectSlug, slug string, input CreateInput) (model.
 	if err != nil {
 		return model.TaskRecord{}, err
 	}
+	number, err := s.store.NextTaskNumber(projectSlug)
+	if err != nil {
+		return model.TaskRecord{}, err
+	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	manifest := model.Manifest{ID: newID(), Kind: model.EntityKindTask, Slug: slug, Name: fallbackName(slug, input.Name), Description: input.Description, ProjectID: project.Manifest.ID, ProjectSlug: projectSlug, CreatedAt: now}
+	manifest := model.Manifest{ID: newID(), Kind: model.EntityKindTask, Number: number, Slug: slug, Name: fallbackName(slug, input.Name), Description: input.Description, ProjectID: project.Manifest.ID, ProjectNumber: project.Manifest.Number, ProjectSlug: project.Manifest.Slug, CreatedAt: now}
 	if err := s.store.CreateTask(manifest); err != nil {
 		return model.TaskRecord{}, err
 	}
 	patch := model.MetadataPatch{VarsSet: model.MergeVars(cfg.Defaults.Task.Vars, input.Vars)}
-	if len(cfg.Defaults.Task.Labels) > 0 || len(input.Labels) > 0 || len(patch.VarsSet) > 0 {
-		patch.Labels = append(append([]string{}, cfg.Defaults.Task.Labels...), input.Labels...)
+	labels := model.MergeLabels(cfg.Defaults.Task.Labels, input.Labels)
+	if len(labels) > 0 || len(patch.VarsSet) > 0 {
+		patch.Labels = labels
 		if err := s.store.AppendTaskEvent(projectSlug, slug, model.Event{ID: newID(), EntityID: manifest.ID, Kind: model.EventKindMetadataPatch, At: now, Actor: "taskman", MetadataPatch: &patch}); err != nil {
 			return model.TaskRecord{}, err
 		}
@@ -65,13 +70,39 @@ func (s TaskService) Update(projectSlug, taskSlug string, labels []string, vars 
 	}
 	patch := model.MetadataPatch{VarsSet: vars, VarsUnset: unsetVars}
 	if labels != nil {
-		patch.Labels = append([]string{}, labels...)
+		patch.Labels = model.NormalizeLabels(labels)
 	}
 	event := model.Event{ID: newID(), EntityID: record.Manifest.ID, Kind: model.EventKindMetadataPatch, At: s.now().UTC().Format(time.RFC3339Nano), Actor: "taskman", ParentHeadID: record.State.CurrentHeadID, MetadataPatch: &patch}
 	if err := s.store.AppendTaskEvent(projectSlug, taskSlug, event); err != nil {
 		return model.TaskRecord{}, err
 	}
 	return s.store.LoadTask(projectSlug, taskSlug)
+}
+
+func (s TaskService) AddLabels(projectSlug, taskSlug string, labels []string) (model.TaskRecord, error) {
+	record, err := s.store.LoadTask(projectSlug, taskSlug)
+	if err != nil {
+		return model.TaskRecord{}, err
+	}
+	return s.Update(projectSlug, taskSlug, model.MergeLabels(record.State.Labels, labels), nil, nil)
+}
+
+func (s TaskService) RemoveLabels(projectSlug, taskSlug string, labels []string) (model.TaskRecord, error) {
+	record, err := s.store.LoadTask(projectSlug, taskSlug)
+	if err != nil {
+		return model.TaskRecord{}, err
+	}
+	return s.Update(projectSlug, taskSlug, model.RemoveLabels(record.State.Labels, labels), nil, nil)
+}
+
+func (s TaskService) Rename(projectSlug, taskSlug, newSlug string) (model.TaskRecord, error) {
+	if _, _, err := s.store.LoadOptionalConfig(); err != nil {
+		return model.TaskRecord{}, err
+	}
+	if newSlug == "" {
+		return model.TaskRecord{}, fmt.Errorf("task slug is required")
+	}
+	return s.store.RenameTask(projectSlug, taskSlug, newSlug)
 }
 
 func (s TaskService) AddMessage(projectSlug, taskSlug string, input MessageInput) error {

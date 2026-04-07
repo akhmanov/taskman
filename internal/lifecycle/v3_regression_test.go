@@ -96,7 +96,7 @@ func TestProjectServiceMiddlewareWriteFailsClosedWhenJournalAppendFails(t *testi
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	eventsDir := filepath.Join(root, "projects", "alpha", "events")
+	eventsDir := filepath.Join(root, "projects", project.Manifest.Ref(), "events")
 	if err := os.Chmod(eventsDir, 0o555); err != nil {
 		t.Fatalf("chmod events dir: %v", err)
 	}

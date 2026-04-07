@@ -1,5 +1,7 @@
 package model
 
+import "fmt"
+
 type EntityKind string
 
 const (
@@ -8,14 +10,31 @@ const (
 )
 
 type Manifest struct {
-	ID          string     `json:"id"`
-	Kind        EntityKind `json:"kind"`
-	Slug        string     `json:"slug"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	ProjectID   string     `json:"project_id,omitempty"`
-	ProjectSlug string     `json:"project_slug,omitempty"`
-	CreatedAt   string     `json:"created_at"`
+	ID            string     `json:"id"`
+	Kind          EntityKind `json:"kind"`
+	Number        int        `json:"number,omitempty"`
+	Slug          string     `json:"slug"`
+	Name          string     `json:"name"`
+	Description   string     `json:"description"`
+	ProjectID     string     `json:"project_id,omitempty"`
+	ProjectNumber int        `json:"project_number,omitempty"`
+	ProjectSlug   string     `json:"project_slug,omitempty"`
+	CreatedAt     string     `json:"created_at"`
+}
+
+func CanonicalRef(number int, slug string) string {
+	if number <= 0 || slug == "" {
+		return slug
+	}
+	return fmt.Sprintf("%d_%s", number, slug)
+}
+
+func (m Manifest) Ref() string {
+	return CanonicalRef(m.Number, m.Slug)
+}
+
+func (m Manifest) ProjectRef() string {
+	return CanonicalRef(m.ProjectNumber, m.ProjectSlug)
 }
 
 type ProjectionState struct {

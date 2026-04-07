@@ -44,10 +44,15 @@ func (s ProjectService) Create(slug string, input CreateInput) (model.ProjectRec
 	if err != nil {
 		return model.ProjectRecord{}, err
 	}
+	number, err := s.store.NextProjectNumber()
+	if err != nil {
+		return model.ProjectRecord{}, err
+	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	manifest := model.Manifest{
 		ID:          newID(),
 		Kind:        model.EntityKindProject,
+		Number:      number,
 		Slug:        slug,
 		Name:        fallbackName(slug, input.Name),
 		Description: input.Description,
@@ -56,9 +61,10 @@ func (s ProjectService) Create(slug string, input CreateInput) (model.ProjectRec
 	if err := s.store.CreateProject(manifest); err != nil {
 		return model.ProjectRecord{}, err
 	}
-	patch := model.MetadataPatch{Labels: append([]string{}, input.Labels...), VarsSet: model.MergeVars(cfg.Defaults.Project.Vars, input.Vars)}
-	if len(cfg.Defaults.Project.Labels) > 0 || len(input.Labels) > 0 || len(patch.VarsSet) > 0 {
-		patch.Labels = append(append([]string{}, cfg.Defaults.Project.Labels...), input.Labels...)
+	patch := model.MetadataPatch{VarsSet: model.MergeVars(cfg.Defaults.Project.Vars, input.Vars)}
+	labels := model.MergeLabels(cfg.Defaults.Project.Labels, input.Labels)
+	if len(labels) > 0 || len(patch.VarsSet) > 0 {
+		patch.Labels = labels
 		if err := s.store.AppendProjectEvent(slug, model.Event{ID: newID(), EntityID: manifest.ID, Kind: model.EventKindMetadataPatch, At: now, Actor: "taskman", MetadataPatch: &patch}); err != nil {
 			return model.ProjectRecord{}, err
 		}
@@ -79,13 +85,39 @@ func (s ProjectService) Update(slug string, labels []string, vars map[string]str
 	}
 	patch := model.MetadataPatch{VarsSet: vars, VarsUnset: unsetVars}
 	if labels != nil {
-		patch.Labels = append([]string{}, labels...)
+		patch.Labels = model.NormalizeLabels(labels)
 	}
 	event := model.Event{ID: newID(), EntityID: record.Manifest.ID, Kind: model.EventKindMetadataPatch, At: s.now().UTC().Format(time.RFC3339Nano), Actor: "taskman", ParentHeadID: record.State.CurrentHeadID, MetadataPatch: &patch}
 	if err := s.store.AppendProjectEvent(slug, event); err != nil {
 		return model.ProjectRecord{}, err
 	}
 	return s.store.LoadProject(slug)
+}
+
+func (s ProjectService) AddLabels(slug string, labels []string) (model.ProjectRecord, error) {
+	record, err := s.store.LoadProject(slug)
+	if err != nil {
+		return model.ProjectRecord{}, err
+	}
+	return s.Update(slug, model.MergeLabels(record.State.Labels, labels), nil, nil)
+}
+
+func (s ProjectService) RemoveLabels(slug string, labels []string) (model.ProjectRecord, error) {
+	record, err := s.store.LoadProject(slug)
+	if err != nil {
+		return model.ProjectRecord{}, err
+	}
+	return s.Update(slug, model.RemoveLabels(record.State.Labels, labels), nil, nil)
+}
+
+func (s ProjectService) Rename(slug, newSlug string) (model.ProjectRecord, error) {
+	if _, _, err := s.store.LoadOptionalConfig(); err != nil {
+		return model.ProjectRecord{}, err
+	}
+	if newSlug == "" {
+		return model.ProjectRecord{}, fmt.Errorf("project slug is required")
+	}
+	return s.store.RenameProject(slug, newSlug)
 }
 
 func (s ProjectService) AddMessage(slug string, input MessageInput) error {
